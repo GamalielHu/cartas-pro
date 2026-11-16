@@ -1,0 +1,6 @@
+// CartasPro: cartas formales con exportación PDF/DOCX y firma manuscrita.
+plugins {
+    alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.kotlin.android) apply false
+    alias(libs.plugins.kotlin.compose) apply false
+}
