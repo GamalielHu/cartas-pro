@@ -99,6 +99,12 @@ class PreferenciasCarta(private val context: Context) {
             val a = JSONArray(json)
             (0 until a.length()).map { i ->
                 val o = a.getJSONObject(i)
+                val fabrica = Plantillas.perfilesIniciales.firstOrNull { it.id == o.optString("id") }
+                // Perfiles guardados antes del formato 2: se toma el formato de fábrica (logo, membrete, Cc/arch.)
+                if (fabrica != null && o.optInt("formato", 1) < 2) return@map fabrica.copy(
+                    representante = o.optString("representante"), ci = o.optString("ci"), telefono = o.optString("telefono"),
+                    cargo = o.optString("cargo").ifBlank { fabrica.cargo }, empresa = o.optString("empresa").ifBlank { fabrica.empresa }
+                )
                 Perfil(
                     id = o.getString("id"), nombre = o.optString("nombre"), personal = o.optBoolean("personal"),
                     representante = o.optString("representante"), cargo = o.optString("cargo"),
@@ -124,6 +130,7 @@ class PreferenciasCarta(private val context: Context) {
                 put("estilo", p.estilo.name); put("copiaArchivo", p.copiaArchivo); put("datosBajoFirma", p.datosBajoFirma)
                 put("fuente", p.fuente.name); put("papel", p.papel.name)
                 put("logoAnchoPt", p.logoAnchoPt.toDouble()); put("lineaEncabezado", p.lineaEncabezado)
+                put("formato", 2)
             })
         }
         context.almacen.edit { it[K.perfiles] = a.toString() }

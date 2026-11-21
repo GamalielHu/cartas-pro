@@ -81,10 +81,19 @@ class CartasViewModel(app: Application) : AndroidViewModel(app) {
     init {
         viewModelScope.launch {
             _perfiles.value = prefs.perfiles()
+            withContext(Dispatchers.IO) { logos.instalarDeFabrica(Plantillas.perfilesIniciales.map { it.id }) }
             _recientes.value = prefs.recientes()
             val guardada = prefs.cargar()
             hayBorrador = guardada != null && guardada.cuerpo.isNotBlank()
-            _carta.value = guardada ?: aplicarPerfil(Carta(), _perfiles.value.first())
+            val perfilGuardado = guardada?.let { g -> _perfiles.value.firstOrNull { it.id == g.perfilId } }
+            _carta.value = when {
+                guardada == null -> aplicarPerfil(Carta(), _perfiles.value.first())
+                perfilGuardado != null -> guardada.copy(
+                    membrete = perfilGuardado.membrete, lineaEncabezado = perfilGuardado.lineaEncabezado,
+                    copiaArchivo = perfilGuardado.copiaArchivo, logoAnchoPt = perfilGuardado.logoAnchoPt, mostrarMembrete = true
+                )
+                else -> guardada
+            }
             cargado = true
             launch { _perfiles.drop(1).debounce(500).collect { prefs.guardarPerfiles(it) } }
             _carta.drop(1).debounce(600).collect { prefs.guardar(it) }

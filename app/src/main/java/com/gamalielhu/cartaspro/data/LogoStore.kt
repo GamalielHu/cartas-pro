@@ -28,6 +28,19 @@ class LogoStore(private val context: Context) {
         ruta(perfilId).outputStream().use { final.compress(Bitmap.CompressFormat.PNG, 100, it) }
     }
 
+    /** Copia una sola vez los logos de fábrica (assets/logos/<perfil>.png). */
+    fun instalarDeFabrica(ids: List<String>) {
+        val marca = File(context.filesDir, "logos_fabrica_v1")
+        if (marca.exists()) return
+        ids.forEach { id ->
+            if (archivo(id) != null) return@forEach
+            runCatching {
+                context.assets.open("logos/$id.png").use { entrada -> ruta(id).outputStream().use { entrada.copyTo(it) } }
+            }
+        }
+        marca.writeText("ok")
+    }
+
     fun importar(perfilId: String, uri: Uri): Boolean {
         val bmp = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) } ?: return false
         guardar(perfilId, bmp)
