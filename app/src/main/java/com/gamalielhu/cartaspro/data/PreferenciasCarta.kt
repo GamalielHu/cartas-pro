@@ -8,95 +8,146 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.gamalielhu.cartaspro.model.Carta
+import com.gamalielhu.cartaspro.model.Destinatario
+import com.gamalielhu.cartaspro.model.Estilo
 import com.gamalielhu.cartaspro.model.Fuente
 import com.gamalielhu.cartaspro.model.Papel
+import com.gamalielhu.cartaspro.model.Perfil
+import com.gamalielhu.cartaspro.model.Plantillas
 import com.gamalielhu.cartaspro.model.PosicionFirma
 import com.gamalielhu.cartaspro.model.TipoCarta
 import kotlinx.coroutines.flow.first
+import org.json.JSONArray
+import org.json.JSONObject
 
 private val Context.almacen: DataStore<Preferences> by preferencesDataStore(name = "carta")
 
-/** Autoguardado de la carta en curso (datos frecuentes + borrador). */
+private inline fun <reified T : Enum<T>> enumDe(s: String?, defecto: T): T =
+    s?.let { v -> enumValues<T>().firstOrNull { it.name == v } } ?: defecto
+
+/** Autoguardado de la carta en curso, perfiles (empresas/personal) y destinatarios recientes. */
 class PreferenciasCarta(private val context: Context) {
 
     private object K {
-        val tipo = stringPreferencesKey("tipo")
-        val lugarFecha = stringPreferencesKey("lugar_fecha")
-        val remNombre = stringPreferencesKey("rem_nombre")
-        val remCargo = stringPreferencesKey("rem_cargo")
-        val remCi = stringPreferencesKey("rem_ci")
-        val remTelefono = stringPreferencesKey("rem_telefono")
-        val destEncabezado = stringPreferencesKey("dest_encabezado")
-        val destTratamiento = stringPreferencesKey("dest_tratamiento")
-        val destNombre = stringPreferencesKey("dest_nombre")
-        val destCargo = stringPreferencesKey("dest_cargo")
-        val destInstitucion = stringPreferencesKey("dest_institucion")
-        val referencia = stringPreferencesKey("referencia")
-        val cuerpo = stringPreferencesKey("cuerpo")
-        val despedida = stringPreferencesKey("despedida")
-        val posicion = stringPreferencesKey("posicion_firma")
-        val f1Nombre = stringPreferencesKey("f1_nombre")
-        val f1Cargo = stringPreferencesKey("f1_cargo")
-        val f2Nombre = stringPreferencesKey("f2_nombre")
-        val f2Cargo = stringPreferencesKey("f2_cargo")
-        val datosBajoFirma = booleanPreferencesKey("datos_bajo_firma")
-        val papel = stringPreferencesKey("papel")
-        val fuente = stringPreferencesKey("fuente")
+        val carta = stringPreferencesKey("carta_v2")
+        val perfiles = stringPreferencesKey("perfiles")
+        val recientes = stringPreferencesKey("destinatarios")
     }
 
-    suspend fun cargar(): Carta {
-        val p = context.almacen.data.first()
-        val d = Carta()
-        return Carta(
-            tipo = p[K.tipo]?.let { runCatching { TipoCarta.valueOf(it) }.getOrNull() } ?: d.tipo,
-            lugarFecha = p[K.lugarFecha] ?: d.lugarFecha,
-            remNombre = p[K.remNombre] ?: d.remNombre,
-            remCargo = p[K.remCargo] ?: d.remCargo,
-            remCi = p[K.remCi] ?: d.remCi,
-            remTelefono = p[K.remTelefono] ?: d.remTelefono,
-            destEncabezado = p[K.destEncabezado] ?: d.destEncabezado,
-            destTratamiento = p[K.destTratamiento] ?: d.destTratamiento,
-            destNombre = p[K.destNombre] ?: d.destNombre,
-            destCargo = p[K.destCargo] ?: d.destCargo,
-            destInstitucion = p[K.destInstitucion] ?: d.destInstitucion,
-            referencia = p[K.referencia] ?: d.referencia,
-            cuerpo = p[K.cuerpo] ?: d.cuerpo,
-            despedida = p[K.despedida] ?: d.despedida,
-            posicionFirma = p[K.posicion]?.let { runCatching { PosicionFirma.valueOf(it) }.getOrNull() } ?: d.posicionFirma,
-            firmante1Nombre = p[K.f1Nombre] ?: d.firmante1Nombre,
-            firmante1Cargo = p[K.f1Cargo] ?: d.firmante1Cargo,
-            firmante2Nombre = p[K.f2Nombre] ?: d.firmante2Nombre,
-            firmante2Cargo = p[K.f2Cargo] ?: d.firmante2Cargo,
-            datosBajoFirma = p[K.datosBajoFirma] ?: d.datosBajoFirma,
-            papel = p[K.papel]?.let { runCatching { Papel.valueOf(it) }.getOrNull() } ?: d.papel,
-            fuente = p[K.fuente]?.let { runCatching { Fuente.valueOf(it) }.getOrNull() } ?: d.fuente
-        )
+    // ------------------------------------------------------------ carta
+
+    suspend fun cargar(): Carta? {
+        val json = context.almacen.data.first()[K.carta] ?: return null
+        return runCatching { cartaDe(JSONObject(json)) }.getOrNull()
     }
 
     suspend fun guardar(c: Carta) {
-        context.almacen.edit { p ->
-            p[K.tipo] = c.tipo.name
-            p[K.lugarFecha] = c.lugarFecha
-            p[K.remNombre] = c.remNombre
-            p[K.remCargo] = c.remCargo
-            p[K.remCi] = c.remCi
-            p[K.remTelefono] = c.remTelefono
-            p[K.destEncabezado] = c.destEncabezado
-            p[K.destTratamiento] = c.destTratamiento
-            p[K.destNombre] = c.destNombre
-            p[K.destCargo] = c.destCargo
-            p[K.destInstitucion] = c.destInstitucion
-            p[K.referencia] = c.referencia
-            p[K.cuerpo] = c.cuerpo
-            p[K.despedida] = c.despedida
-            p[K.posicion] = c.posicionFirma.name
-            p[K.f1Nombre] = c.firmante1Nombre
-            p[K.f1Cargo] = c.firmante1Cargo
-            p[K.f2Nombre] = c.firmante2Nombre
-            p[K.f2Cargo] = c.firmante2Cargo
-            p[K.datosBajoFirma] = c.datosBajoFirma
-            p[K.papel] = c.papel.name
-            p[K.fuente] = c.fuente.name
+        context.almacen.edit { it[K.carta] = cartaAJson(c).toString() }
+    }
+
+    private fun cartaAJson(c: Carta) = JSONObject().apply {
+        put("tipo", c.tipo.name); put("estilo", c.estilo.name); put("perfilId", c.perfilId)
+        put("lugarFecha", c.lugarFecha)
+        put("remNombre", c.remNombre); put("remCargo", c.remCargo); put("remEmpresa", c.remEmpresa)
+        put("remCi", c.remCi); put("remTelefono", c.remTelefono)
+        put("membrete", c.membrete); put("mostrarMembrete", c.mostrarMembrete)
+        put("destEncabezado", c.destEncabezado); put("destTratamiento", c.destTratamiento)
+        put("destNombre", c.destNombre); put("destCargo", c.destCargo); put("destInstitucion", c.destInstitucion)
+        put("asunto", c.asunto); put("proyecto", c.proyecto); put("titulo", c.titulo)
+        put("cuerpo", c.cuerpo); put("cuerpoAuto", c.cuerpoAuto); put("despedida", c.despedida)
+        put("campos", JSONObject(c.campos as Map<*, *>))
+        put("posicionFirma", c.posicionFirma.name)
+        put("f1Nombre", c.firmante1Nombre); put("f1Cargo", c.firmante1Cargo)
+        put("f2Nombre", c.firmante2Nombre); put("f2Cargo", c.firmante2Cargo)
+        put("datosBajoFirma", c.datosBajoFirma); put("lineaFirma", c.lineaFirma); put("copiaArchivo", c.copiaArchivo)
+        put("papel", c.papel.name); put("fuente", c.fuente.name)
+    }
+
+    private fun cartaDe(o: JSONObject): Carta {
+        val d = Carta()
+        val campos = o.optJSONObject("campos")?.let { cj -> cj.keys().asSequence().associateWith { cj.optString(it) } } ?: emptyMap()
+        return Carta(
+            tipo = enumDe(o.optString("tipo"), d.tipo),
+            estilo = enumDe(o.optString("estilo"), d.estilo),
+            perfilId = o.optString("perfilId"),
+            lugarFecha = o.optString("lugarFecha"),
+            remNombre = o.optString("remNombre"), remCargo = o.optString("remCargo"),
+            remEmpresa = o.optString("remEmpresa"), remCi = o.optString("remCi"), remTelefono = o.optString("remTelefono"),
+            membrete = o.optString("membrete"), mostrarMembrete = o.optBoolean("mostrarMembrete"),
+            destEncabezado = o.optString("destEncabezado", d.destEncabezado),
+            destTratamiento = o.optString("destTratamiento"), destNombre = o.optString("destNombre"),
+            destCargo = o.optString("destCargo"), destInstitucion = o.optString("destInstitucion"),
+            asunto = o.optString("asunto"), proyecto = o.optString("proyecto"), titulo = o.optString("titulo"),
+            cuerpo = o.optString("cuerpo"), cuerpoAuto = o.optBoolean("cuerpoAuto"), despedida = o.optString("despedida"),
+            campos = campos,
+            posicionFirma = enumDe(o.optString("posicionFirma"), PosicionFirma.CENTRADA),
+            firmante1Nombre = o.optString("f1Nombre"), firmante1Cargo = o.optString("f1Cargo"),
+            firmante2Nombre = o.optString("f2Nombre"), firmante2Cargo = o.optString("f2Cargo"),
+            datosBajoFirma = o.optBoolean("datosBajoFirma"), lineaFirma = o.optBoolean("lineaFirma"),
+            copiaArchivo = o.optBoolean("copiaArchivo"),
+            papel = enumDe(o.optString("papel"), Papel.CARTA), fuente = enumDe(o.optString("fuente"), Fuente.SERIF)
+        )
+    }
+
+    // ------------------------------------------------------------ perfiles
+
+    suspend fun perfiles(): List<Perfil> {
+        val json = context.almacen.data.first()[K.perfiles] ?: return Plantillas.perfilesIniciales
+        return runCatching {
+            val a = JSONArray(json)
+            (0 until a.length()).map { i ->
+                val o = a.getJSONObject(i)
+                Perfil(
+                    id = o.getString("id"), nombre = o.optString("nombre"), personal = o.optBoolean("personal"),
+                    representante = o.optString("representante"), cargo = o.optString("cargo"),
+                    empresa = o.optString("empresa"), ci = o.optString("ci"), telefono = o.optString("telefono"),
+                    ciudad = o.optString("ciudad", "Potosí"), membrete = o.optString("membrete"),
+                    estilo = enumDe(o.optString("estilo"), Estilo.CLASICA),
+                    copiaArchivo = o.optBoolean("copiaArchivo"), datosBajoFirma = o.optBoolean("datosBajoFirma"),
+                    fuente = enumDe(o.optString("fuente"), Fuente.SERIF), papel = enumDe(o.optString("papel"), Papel.CARTA)
+                )
+            }.ifEmpty { Plantillas.perfilesIniciales }
+        }.getOrDefault(Plantillas.perfilesIniciales)
+    }
+
+    suspend fun guardarPerfiles(lista: List<Perfil>) {
+        val a = JSONArray()
+        lista.forEach { p ->
+            a.put(JSONObject().apply {
+                put("id", p.id); put("nombre", p.nombre); put("personal", p.personal)
+                put("representante", p.representante); put("cargo", p.cargo); put("empresa", p.empresa)
+                put("ci", p.ci); put("telefono", p.telefono); put("ciudad", p.ciudad); put("membrete", p.membrete)
+                put("estilo", p.estilo.name); put("copiaArchivo", p.copiaArchivo); put("datosBajoFirma", p.datosBajoFirma)
+                put("fuente", p.fuente.name); put("papel", p.papel.name)
+            })
         }
+        context.almacen.edit { it[K.perfiles] = a.toString() }
+    }
+
+    // ------------------------------------------------------------ destinatarios recientes
+
+    suspend fun recientes(): List<Destinatario> {
+        val json = context.almacen.data.first()[K.recientes] ?: return emptyList()
+        return runCatching {
+            val a = JSONArray(json)
+            (0 until a.length()).map { i ->
+                val o = a.getJSONObject(i)
+                Destinatario(
+                    o.optString("encabezado", "Señores:"), o.optString("tratamiento"), o.optString("nombre"),
+                    o.optString("cargo"), o.optString("institucion")
+                )
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    suspend fun guardarRecientes(lista: List<Destinatario>) {
+        val a = JSONArray()
+        lista.forEach { d ->
+            a.put(JSONObject().apply {
+                put("encabezado", d.encabezado); put("tratamiento", d.tratamiento); put("nombre", d.nombre)
+                put("cargo", d.cargo); put("institucion", d.institucion)
+            })
+        }
+        context.almacen.edit { it[K.recientes] = a.toString() }
     }
 }

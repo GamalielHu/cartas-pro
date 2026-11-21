@@ -1,10 +1,12 @@
 package com.gamalielhu.cartaspro.ui.screens
 
+import android.graphics.BitmapFactory
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -29,10 +31,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -47,6 +49,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -80,38 +83,42 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import com.gamalielhu.cartaspro.data.Exportador
 import com.gamalielhu.cartaspro.data.Formato
 import com.gamalielhu.cartaspro.model.Carta
+import com.gamalielhu.cartaspro.model.ComposicionCarta
+import com.gamalielhu.cartaspro.model.Estilo
 import com.gamalielhu.cartaspro.model.Fuente
+import com.gamalielhu.cartaspro.model.NumeroLetras
 import com.gamalielhu.cartaspro.model.Papel
 import com.gamalielhu.cartaspro.model.Plantillas
 import com.gamalielhu.cartaspro.model.PosicionFirma
+import com.gamalielhu.cartaspro.model.TipoCampo
 import com.gamalielhu.cartaspro.ui.CartasViewModel
 import com.gamalielhu.cartaspro.ui.components.DialogoFirma
-import android.graphics.BitmapFactory
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 
-private val TRATAMIENTOS = listOf("Sr.", "Sra.", "Ing.", "Lic.", "Dr.", "Dra.", "Arq.", "Abog.", "Prof.")
+private val TRATAMIENTOS = listOf("Sr.", "Sra.", "Ing.", "Lic.", "Arq.", "Dr.", "Dra.", "Abog.", "Prof.")
+private const val CAMPO_LUGAR = "__lugar"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditorScreen(vm: CartasViewModel) {
     val carta by vm.carta.collectAsState()
+    val version by vm.versionFirma.collectAsState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val snack = remember { SnackbarHostState() }
     var pestana by rememberSaveable { mutableIntStateOf(0) }
     var menuCompartir by remember { mutableStateOf(false) }
+    var dibujarFirma by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(Unit) { vm.mensajes.collect { snack.showSnackbar(it) } }
 
@@ -133,16 +140,20 @@ fun EditorScreen(vm: CartasViewModel) {
         topBar = {
             Column {
                 TopAppBar(
-                    title = { Text(carta.tipo.titulo, maxLines = 1) },
-                    navigationIcon = {
-                        IconButton(onClick = { vm.volverAlInicio() }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver")
+                    title = {
+                        Column {
+                            Text(carta.tipo.titulo, maxLines = 1)
+                            vm.perfilActual?.let { Text(it.nombre, style = MaterialTheme.typography.labelSmall) }
                         }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = { vm.volverAlInicio() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Volver") }
                     }
                 )
                 TabRow(selectedTabIndex = pestana) {
-                    Tab(selected = pestana == 0, onClick = { pestana = 0 }, text = { Text("Datos") })
-                    Tab(selected = pestana == 1, onClick = { pestana = 1 }, text = { Text("Vista previa") })
+                    Tab(selected = pestana == 0, onClick = { pestana = 0 }, text = { Text("Hoja") })
+                    Tab(selected = pestana == 1, onClick = { pestana = 1 }, text = { Text("Datos") })
+                    Tab(selected = pestana == 2, onClick = { pestana = 2 }, text = { Text("PDF") })
                 }
             }
         },
@@ -154,7 +165,7 @@ fun EditorScreen(vm: CartasViewModel) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Button(onClick = { guardarPdf.launch(vm.nombreArchivo(Formato.PDF)) }, modifier = Modifier.weight(1f)) {
-                        Text("Exportar PDF")
+                        Text("Guardar PDF")
                     }
                     OutlinedButton(onClick = { guardarDocx.launch(vm.nombreArchivo(Formato.DOCX)) }, modifier = Modifier.weight(1f)) {
                         Text("Word")
@@ -175,181 +186,12 @@ fun EditorScreen(vm: CartasViewModel) {
         }
     ) { pad ->
         Box(Modifier.fillMaxSize().padding(pad)) {
-            if (pestana == 0) FormularioCarta(vm, carta) else VistaPrevia(vm)
-        }
-    }
-}
-
-// =========================================================================== Formulario
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun FormularioCarta(vm: CartasViewModel, carta: Carta) {
-    var verFecha by remember { mutableStateOf(false) }
-    var dibujarFirma by remember { mutableIntStateOf(0) }
-    var firmaGaleria by remember { mutableIntStateOf(1) }
-    var confirmarEstructura by remember { mutableStateOf(false) }
-    val version by vm.versionFirma.collectAsState()
-
-    val galeria = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        uri?.let { vm.importarFirma(firmaGaleria, it) }
-    }
-
-    // Cuerpo con cursor propio para insertar cláusulas donde está el cursor.
-    var cuerpo by remember { mutableStateOf(TextFieldValue(carta.cuerpo, TextRange(carta.cuerpo.length))) }
-    LaunchedEffect(carta.cuerpo) {
-        if (carta.cuerpo != cuerpo.text) cuerpo = TextFieldValue(carta.cuerpo, TextRange(carta.cuerpo.length))
-    }
-    fun insertar(texto: String) {
-        val t = cuerpo.text
-        val ini = cuerpo.selection.min.coerceIn(0, t.length)
-        val fin = cuerpo.selection.max.coerceIn(0, t.length)
-        val antes = t.substring(0, ini)
-        val sep = when {
-            antes.isEmpty() || antes.endsWith("\n\n") -> ""
-            antes.endsWith("\n") -> "\n"
-            else -> "\n\n"
-        }
-        val nuevo = antes + sep + texto + t.substring(fin)
-        val cursor = (antes + sep + texto).length
-        cuerpo = TextFieldValue(nuevo, TextRange(cursor))
-        vm.actualizar { it.copy(cuerpo = nuevo) }
-    }
-
-    Column(
-        Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Seccion("Lugar y fecha") {
-            Campo("Lugar y fecha", carta.lugarFecha, { v -> vm.actualizar { it.copy(lugarFecha = v) } },
-                trailing = {
-                    IconButton(onClick = { verFecha = true }) { Icon(Icons.Filled.DateRange, "Elegir fecha") }
-                })
-            Text("Ej.: Sucre, 16 de noviembre de 2026. El calendario conserva la ciudad.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-
-        Seccion("Remitente") {
-            Campo("Nombre completo", carta.remNombre, { v -> vm.actualizar { it.copy(remNombre = v) } }, palabras = true)
-            Campo("Cargo / Profesión", carta.remCargo, { v -> vm.actualizar { it.copy(remCargo = v) } })
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Campo("C.I. / NIT", carta.remCi, { v -> vm.actualizar { it.copy(remCi = v) } }, modifier = Modifier.weight(1f))
-                Campo("Teléfono", carta.remTelefono, { v -> vm.actualizar { it.copy(remTelefono = v) } },
-                    teclado = KeyboardType.Phone, modifier = Modifier.weight(1f))
+            when (pestana) {
+                0 -> HojaEditable(vm, carta, version) { dibujarFirma = it }
+                1 -> FormularioCarta(vm, carta, version) { dibujarFirma = it }
+                else -> VistaPrevia(vm)
             }
         }
-
-        Seccion("Destinatario") {
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                TRATAMIENTOS.forEach { t ->
-                    FilterChip(
-                        selected = carta.destTratamiento == t,
-                        onClick = {
-                            vm.actualizar {
-                                val fem = t == "Sra." || t == "Dra."
-                                val enc = when (it.destEncabezado) {
-                                    "Señor:", "Señora:", "" -> if (fem) "Señora:" else "Señor:"
-                                    else -> it.destEncabezado
-                                }
-                                it.copy(destTratamiento = t, destEncabezado = enc)
-                            }
-                        },
-                        label = { Text(t) }
-                    )
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Campo("Encabezado", carta.destEncabezado, { v -> vm.actualizar { it.copy(destEncabezado = v) } }, modifier = Modifier.weight(1f))
-                Campo("Tratamiento", carta.destTratamiento, { v -> vm.actualizar { it.copy(destTratamiento = v) } }, modifier = Modifier.weight(1f))
-            }
-            Campo("Nombre completo", carta.destNombre, { v -> vm.actualizar { it.copy(destNombre = v) } }, palabras = true)
-            Campo("Cargo", carta.destCargo, { v -> vm.actualizar { it.copy(destCargo = v) } })
-            Campo("Institución / Empresa", carta.destInstitucion, { v -> vm.actualizar { it.copy(destInstitucion = v) } })
-        }
-
-        Seccion("Referencia") {
-            Campo("REF.:", carta.referencia, { v -> vm.actualizar { it.copy(referencia = v) } }, mayusculas = true, unaLinea = false)
-            Text("Sale en negrita y subrayada, alineada a la derecha.",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-
-        Seccion("Cuerpo de la carta") {
-            Text("Cláusulas rápidas (se insertan donde está el cursor):", style = MaterialTheme.typography.bodySmall)
-            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Plantillas.clausulas(carta.tipo).forEach { c ->
-                    AssistChip(onClick = { insertar(c.texto) }, label = { Text(c.titulo) })
-                }
-            }
-            OutlinedTextField(
-                value = cuerpo,
-                onValueChange = { v -> cuerpo = v; if (v.text != carta.cuerpo) vm.actualizar { it.copy(cuerpo = v.text) } },
-                label = { Text("Texto") },
-                minLines = 8,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                modifier = Modifier.fillMaxWidth()
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Cada línea es un párrafo. **texto** = negrita.",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f))
-                TextButton(onClick = {
-                    if (carta.cuerpo.isBlank()) vm.autocompletarEstructura() else confirmarEstructura = true
-                }) { Text("Estructura formal") }
-            }
-            Campo("Despedida", carta.despedida, { v -> vm.actualizar { it.copy(despedida = v) } })
-        }
-
-        Seccion("Firma") {
-            Opciones(PosicionFirma.entries, carta.posicionFirma, { it.titulo }) { p -> vm.actualizar { it.copy(posicionFirma = p) } }
-            Text(if (carta.posicionFirma == PosicionFirma.DOBLE) "Firma 1 (izquierda)" else "Firmante",
-                fontWeight = FontWeight.SemiBold)
-            Campo("Nombre del firmante", carta.firmante1Nombre, { v -> vm.actualizar { it.copy(firmante1Nombre = v) } },
-                ayuda = carta.remNombre.takeIf { it.isNotBlank() }?.let { "Vacío = $it" }, palabras = true)
-            Campo("Cargo del firmante", carta.firmante1Cargo, { v -> vm.actualizar { it.copy(firmante1Cargo = v) } },
-                ayuda = carta.remCargo.takeIf { it.isNotBlank() }?.let { "Vacío = $it" })
-            BloqueImagenFirma(vm, 1, version,
-                alDibujar = { dibujarFirma = 1 },
-                alGaleria = { firmaGaleria = 1; galeria.launch("image/*") })
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = carta.datosBajoFirma, onCheckedChange = { v -> vm.actualizar { it.copy(datosBajoFirma = v) } })
-                Text("Mostrar C.I. y teléfono bajo la firma")
-            }
-            if (carta.posicionFirma == PosicionFirma.DOBLE) {
-                HorizontalDivider()
-                Text("Firma 2 (derecha)", fontWeight = FontWeight.SemiBold)
-                Campo("Nombre del firmante 2", carta.firmante2Nombre, { v -> vm.actualizar { it.copy(firmante2Nombre = v) } }, palabras = true)
-                Campo("Cargo del firmante 2", carta.firmante2Cargo, { v -> vm.actualizar { it.copy(firmante2Cargo = v) } })
-                BloqueImagenFirma(vm, 2, version,
-                    alDibujar = { dibujarFirma = 2 },
-                    alGaleria = { firmaGaleria = 2; galeria.launch("image/*") })
-            }
-        }
-
-        Seccion("Formato de hoja") {
-            Text("Papel", style = MaterialTheme.typography.labelLarge)
-            Opciones(Papel.entries, carta.papel, { it.titulo }) { p -> vm.actualizar { it.copy(papel = p) } }
-            Text("Tipografía", style = MaterialTheme.typography.labelLarge)
-            Opciones(Fuente.entries, carta.fuente, { it.titulo }) { f -> vm.actualizar { it.copy(fuente = f) } }
-        }
-        Spacer(Modifier.height(24.dp))
-    }
-
-    if (verFecha) {
-        val estado = rememberDatePickerState(
-            initialSelectedDateMillis = LocalDate.now().atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
-        )
-        DatePickerDialog(
-            onDismissRequest = { verFecha = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    estado.selectedDateMillis?.let { ms ->
-                        vm.fijarFecha(Instant.ofEpochMilli(ms).atZone(ZoneOffset.UTC).toLocalDate())
-                    }
-                    verFecha = false
-                }) { Text("Aceptar") }
-            },
-            dismissButton = { TextButton(onClick = { verFecha = false }) { Text("Cancelar") } }
-        ) { DatePicker(state = estado) }
     }
 
     if (dibujarFirma != 0) {
@@ -363,40 +205,233 @@ private fun FormularioCarta(vm: CartasViewModel, carta: Carta) {
             }
         )
     }
+}
 
-    if (confirmarEstructura) {
-        AlertDialog(
-            onDismissRequest = { confirmarEstructura = false },
-            title = { Text("Reemplazar el texto") },
-            text = { Text("Se cambiará el cuerpo actual por la estructura formal de \"${carta.tipo.titulo}\".") },
+// =========================================================================== Formulario (Datos)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FormularioCarta(vm: CartasViewModel, carta: Carta, version: Int, alDibujarFirma: (Int) -> Unit) {
+    val perfiles by vm.perfiles.collectAsState()
+    val recientes by vm.recientes.collectAsState()
+    var fechaPara by remember { mutableStateOf<String?>(null) }
+    var firmaGaleria by remember { mutableIntStateOf(1) }
+    var nuevoPerfil by remember { mutableStateOf(false) }
+    var borrarPerfil by remember { mutableStateOf(false) }
+
+    val galeria = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { vm.importarFirma(firmaGaleria, it) }
+    }
+
+    Column(
+        Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Seccion("Empresa / perfil") {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                perfiles.forEach { p ->
+                    FilterChip(selected = p.id == carta.perfilId, onClick = { vm.elegirPerfil(p.id) }, label = { Text(p.nombre) })
+                }
+                FilterChip(selected = false, onClick = { nuevoPerfil = true }, label = { Text("+ Nuevo") })
+            }
+            Text("Cada perfil recuerda sus datos y su formato (membrete, A/DE o carta, Cc/arch., letra).",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (perfiles.size > 1 && carta.perfilId.isNotBlank()) {
+                TextButton(onClick = { borrarPerfil = true }) { Text("Borrar este perfil") }
+            }
+        }
+
+        val campos = Plantillas.campos(carta.tipo)
+        if (campos.isNotEmpty()) {
+            Seccion("Datos del trámite") {
+                campos.forEach { cp ->
+                    val valor = carta.campo(cp.clave)
+                    when (cp.tipo) {
+                        TipoCampo.FECHA -> Campo(cp.etiqueta, valor, { vm.actualizarCampo(cp.clave, it) }, ayuda = "10 de septiembre de 2026",
+                            trailing = { IconButton(onClick = { fechaPara = cp.clave }) { Icon(Icons.Filled.DateRange, "Fecha") } })
+                        TipoCampo.MONTO -> {
+                            Campo(cp.etiqueta, valor, { vm.actualizarCampo(cp.clave, it) }, teclado = KeyboardType.Decimal, ayuda = cp.ayuda)
+                            NumeroLetras.montoCompleto(valor)?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                        TipoCampo.MULTILINEA -> Campo(cp.etiqueta, valor, { vm.actualizarCampo(cp.clave, it) }, unaLinea = false, ayuda = cp.ayuda)
+                        TipoCampo.TEXTO -> Campo(cp.etiqueta, valor, { vm.actualizarCampo(cp.clave, it) }, ayuda = cp.ayuda,
+                            mayusculas = cp.clave in setOf("obra", "beneficiario", "tipoPoliza", "cargoProf"))
+                    }
+                }
+                if (!carta.cuerpoAuto) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Editaste el texto a mano: estos datos ya no lo cambian.", style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.weight(1f))
+                        TextButton(onClick = { vm.regenerarCuerpo() }) { Text("Rearmar") }
+                    }
+                }
+            }
+        }
+
+        Seccion("Lugar y fecha") {
+            Campo("Lugar y fecha", carta.lugarFecha, { v -> vm.actualizar { it.copy(lugarFecha = v) } },
+                trailing = { IconButton(onClick = { fechaPara = CAMPO_LUGAR }) { Icon(Icons.Filled.DateRange, "Elegir fecha") } })
+        }
+
+        Seccion("Remitente") {
+            Campo("Nombre completo", carta.remNombre, { v -> vm.actualizar { it.copy(remNombre = v) } }, palabras = true)
+            Campo("Cargo", carta.remCargo, { v -> vm.actualizar { it.copy(remCargo = v) } }, mayusculas = true)
+            Campo("Empresa (razón social)", carta.remEmpresa, { v -> vm.actualizar { it.copy(remEmpresa = v) } }, mayusculas = true)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Campo("C.I. / NIT", carta.remCi, { v -> vm.actualizar { it.copy(remCi = v) } }, modifier = Modifier.weight(1f))
+                Campo("Teléfono", carta.remTelefono, { v -> vm.actualizar { it.copy(remTelefono = v) } },
+                    teclado = KeyboardType.Phone, modifier = Modifier.weight(1f))
+            }
+            Campo("Membrete (una línea por renglón)", carta.membrete, { v -> vm.actualizar { it.copy(membrete = v) } },
+                unaLinea = false, mayusculas = true)
+        }
+
+        if (carta.estilo != Estilo.CERTIFICADO) {
+            Seccion("Destinatario") {
+                if (recientes.isNotEmpty()) {
+                    Text("Recientes", style = MaterialTheme.typography.labelLarge)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        recientes.forEach { d ->
+                            InputChip(
+                                selected = d == carta.destinatario,
+                                onClick = { vm.usarDestinatario(d) },
+                                label = { Text(d.etiqueta, maxLines = 1) },
+                                trailingIcon = {
+                                    Icon(Icons.Filled.Close, "Olvidar", Modifier.size(16.dp).clickable { vm.olvidarDestinatario(d) })
+                                }
+                            )
+                        }
+                    }
+                }
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TRATAMIENTOS.forEach { t ->
+                        FilterChip(selected = carta.destTratamiento == t,
+                            onClick = { vm.actualizar { it.copy(destTratamiento = if (it.destTratamiento == t) "" else t) } },
+                            label = { Text(t) })
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Campo("Encabezado", carta.destEncabezado, { v -> vm.actualizar { it.copy(destEncabezado = v) } }, modifier = Modifier.weight(1f))
+                    Campo("Tratamiento", carta.destTratamiento, { v -> vm.actualizar { it.copy(destTratamiento = v) } }, modifier = Modifier.weight(1f))
+                }
+                Campo("Nombre completo", carta.destNombre, { v -> vm.actualizar { it.copy(destNombre = v) } }, palabras = true)
+                Campo("Cargo", carta.destCargo, { v -> vm.actualizar { it.copy(destCargo = v) } }, mayusculas = true)
+                Campo("Institución / Empresa", carta.destInstitucion, { v -> vm.actualizar { it.copy(destInstitucion = v) } }, mayusculas = true)
+                Text("Se guarda en Recientes al exportar o compartir.", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+
+        Seccion(if (carta.estilo == Estilo.CERTIFICADO) "Título" else "Referencia") {
+            if (carta.estilo == Estilo.CERTIFICADO) {
+                Campo("Título del documento", carta.titulo, { v -> vm.actualizar { it.copy(titulo = v) } }, mayusculas = true)
+            } else {
+                Campo(if (carta.estilo == Estilo.MEMORANDO) "OBJETO" else "REF. (asunto)", carta.asunto,
+                    { v -> vm.actualizar { it.copy(asunto = v) } }, mayusculas = true, unaLinea = false)
+                Campo(if (carta.estilo == Estilo.MEMORANDO) "REF. (obra / proyecto)" else "Obra / proyecto (2.ª línea, opcional)",
+                    carta.proyecto, { v -> vm.actualizar { it.copy(proyecto = v) } }, mayusculas = true, unaLinea = false)
+            }
+        }
+
+        Seccion("Firma") {
+            Opciones(PosicionFirma.entries, carta.posicionFirma, { it.titulo }) { p -> vm.actualizar { it.copy(posicionFirma = p) } }
+            Campo("Firmante (vacío = remitente)", carta.firmante1Nombre, { v -> vm.actualizar { it.copy(firmante1Nombre = v) } }, palabras = true)
+            Campo("Cargo del firmante (vacío = remitente)", carta.firmante1Cargo, { v -> vm.actualizar { it.copy(firmante1Cargo = v) } }, mayusculas = true)
+            BloqueImagenFirma(vm, 1, version, alDibujar = { alDibujarFirma(1) }, alGaleria = { firmaGaleria = 1; galeria.launch("image/*") })
+            if (carta.posicionFirma == PosicionFirma.DOBLE) {
+                HorizontalDivider()
+                Campo("Nombre firma 2", carta.firmante2Nombre, { v -> vm.actualizar { it.copy(firmante2Nombre = v) } }, palabras = true)
+                Campo("Cargo firma 2", carta.firmante2Cargo, { v -> vm.actualizar { it.copy(firmante2Cargo = v) } }, mayusculas = true)
+                BloqueImagenFirma(vm, 2, version, alDibujar = { alDibujarFirma(2) }, alGaleria = { firmaGaleria = 2; galeria.launch("image/*") })
+            }
+            Casilla("Línea sobre el nombre", carta.lineaFirma) { v -> vm.actualizar { it.copy(lineaFirma = v) } }
+            Casilla("C.I. y celular bajo la firma", carta.datosBajoFirma) { v -> vm.actualizar { it.copy(datosBajoFirma = v) } }
+        }
+
+        Seccion("Formato") {
+            Text("Diseño", style = MaterialTheme.typography.labelLarge)
+            if (carta.tipo.estiloFijo != null) {
+                Text("Este documento siempre usa el formato ${carta.tipo.estiloFijo.titulo}.", style = MaterialTheme.typography.bodySmall)
+            } else {
+                Opciones(listOf(Estilo.CLASICA, Estilo.MEMORANDO), carta.estilo, { it.titulo }) { e ->
+                    vm.actualizar { it.copy(estilo = e, mostrarMembrete = if (e == Estilo.MEMORANDO) it.membrete.isNotBlank() else it.mostrarMembrete) }
+                }
+            }
+            Casilla("Mostrar membrete", carta.mostrarMembrete) { v -> vm.actualizar { it.copy(mostrarMembrete = v) } }
+            Casilla("Poner \"Cc/arch.\" al pie", carta.copiaArchivo) { v -> vm.actualizar { it.copy(copiaArchivo = v) } }
+            Text("Papel", style = MaterialTheme.typography.labelLarge)
+            Opciones(Papel.entries, carta.papel, { it.titulo }) { p -> vm.actualizar { it.copy(papel = p) } }
+            Text("Letra", style = MaterialTheme.typography.labelLarge)
+            Opciones(Fuente.entries, carta.fuente, { it.titulo }) { f -> vm.actualizar { it.copy(fuente = f) } }
+        }
+        Spacer(Modifier.height(24.dp))
+    }
+
+    fechaPara?.let { destino ->
+        val estado = rememberDatePickerState(
+            initialSelectedDateMillis = LocalDate.now().atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+        )
+        DatePickerDialog(
+            onDismissRequest = { fechaPara = null },
             confirmButton = {
-                TextButton(onClick = { vm.autocompletarEstructura(); confirmarEstructura = false }) { Text("Reemplazar") }
+                TextButton(onClick = {
+                    estado.selectedDateMillis?.let { ms ->
+                        val f = Instant.ofEpochMilli(ms).atZone(ZoneOffset.UTC).toLocalDate()
+                        if (destino == CAMPO_LUGAR) vm.fijarFecha(f) else vm.actualizarCampo(destino, ComposicionCarta.fecha(f))
+                    }
+                    fechaPara = null
+                }) { Text("Aceptar") }
             },
-            dismissButton = { TextButton(onClick = { confirmarEstructura = false }) { Text("Cancelar") } }
+            dismissButton = { TextButton(onClick = { fechaPara = null }) { Text("Cancelar") } }
+        ) { DatePicker(state = estado) }
+    }
+
+    if (nuevoPerfil) {
+        var nombre by remember { mutableStateOf("") }
+        var personal by remember { mutableStateOf(false) }
+        AlertDialog(
+            onDismissRequest = { nuevoPerfil = false },
+            title = { Text("Nuevo perfil") },
+            text = {
+                Column {
+                    OutlinedTextField(nombre, { nombre = it }, label = { Text("Nombre corto (ej. empresa)") }, singleLine = true)
+                    Casilla("Es personal (sin empresa)", personal) { personal = it }
+                    Text("Se crea con los datos de remitente actuales; luego los cambias en Datos.",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = { TextButton(onClick = { vm.nuevoPerfil(nombre, personal); nuevoPerfil = false }) { Text("Crear") } },
+            dismissButton = { TextButton(onClick = { nuevoPerfil = false }) { Text("Cancelar") } }
+        )
+    }
+
+    if (borrarPerfil) {
+        AlertDialog(
+            onDismissRequest = { borrarPerfil = false },
+            title = { Text("Borrar perfil") },
+            text = { Text("Se borra \"${vm.perfilActual?.nombre ?: ""}\" y sus datos guardados.") },
+            confirmButton = { TextButton(onClick = { vm.borrarPerfil(carta.perfilId); borrarPerfil = false }) { Text("Borrar") } },
+            dismissButton = { TextButton(onClick = { borrarPerfil = false }) { Text("Cancelar") } }
         )
     }
 }
 
 @Composable
-private fun BloqueImagenFirma(
-    vm: CartasViewModel, numero: Int, version: Int,
-    alDibujar: () -> Unit, alGaleria: () -> Unit
-) {
+private fun BloqueImagenFirma(vm: CartasViewModel, numero: Int, version: Int, alDibujar: () -> Unit, alGaleria: () -> Unit) {
     val imagen = remember(numero, version) {
         vm.firmas.archivo(numero)?.let { BitmapFactory.decodeFile(it.path) }?.asImageBitmap()
     }
     Box(
-        Modifier.fillMaxWidth().height(110.dp)
+        Modifier.fillMaxWidth().height(100.dp)
             .background(Color.White, RoundedCornerShape(12.dp))
             .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(12.dp)),
         contentAlignment = Alignment.Center
     ) {
-        if (imagen != null) {
-            Image(imagen, "Firma $numero", Modifier.fillMaxSize().padding(10.dp), contentScale = ContentScale.Fit)
-        } else {
-            Text("Sin firma (queda el espacio para firmar a mano)", color = Color.Gray,
-                style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(12.dp))
-        }
+        if (imagen != null) Image(imagen, "Firma $numero", Modifier.fillMaxSize().padding(10.dp), contentScale = ContentScale.Fit)
+        else Text("Sin firma: queda el espacio para firmar y sellar a mano", color = Color.Gray,
+            style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(12.dp))
     }
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick = alDibujar, contentPadding = PaddingValues(horizontal = 12.dp)) { Text("Dibujar") }
@@ -405,7 +440,7 @@ private fun BloqueImagenFirma(
     }
 }
 
-// =========================================================================== Vista previa
+// =========================================================================== Vista previa (PDF)
 
 @Composable
 private fun VistaPrevia(vm: CartasViewModel) {
@@ -425,10 +460,7 @@ private fun VistaPrevia(vm: CartasViewModel) {
                     bitmap = bmp.asImageBitmap(),
                     contentDescription = "Página ${i + 1}",
                     contentScale = ContentScale.FillWidth,
-                    modifier = Modifier.fillMaxWidth()
-                        .aspectRatio(bmp.width.toFloat() / bmp.height)
-                        .shadow(6.dp)
-                        .background(Color.White)
+                    modifier = Modifier.fillMaxWidth().aspectRatio(bmp.width.toFloat() / bmp.height).shadow(6.dp).background(Color.White)
                 )
                 Spacer(Modifier.height(4.dp))
                 Text("Página ${i + 1} de ${paginas.size}", style = MaterialTheme.typography.labelSmall)
@@ -447,10 +479,17 @@ private fun Seccion(titulo: String, contenido: @Composable ColumnScope.() -> Uni
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(titulo, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.SemiBold)
+            Text(titulo, style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
             contenido()
         }
+    }
+}
+
+@Composable
+private fun Casilla(texto: String, valor: Boolean, alCambiar: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { alCambiar(!valor) }) {
+        Checkbox(checked = valor, onCheckedChange = alCambiar)
+        Text(texto)
     }
 }
 
@@ -472,7 +511,7 @@ private fun Campo(
         onValueChange = alCambiar,
         label = { Text(etiqueta) },
         singleLine = unaLinea,
-        placeholder = ayuda?.let { { Text(it) } },
+        placeholder = ayuda?.takeIf { it.isNotBlank() }?.let { { Text(it) } },
         trailingIcon = trailing,
         keyboardOptions = KeyboardOptions(
             keyboardType = teclado,

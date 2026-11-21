@@ -36,7 +36,7 @@ object GeneradorDocx {
             val op = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(f.path, op)
             if (op.outWidth <= 0) return@mapNotNull null
-            val esc = min(170.0 / op.outWidth, 66.0 / op.outHeight)
+            val esc = min(170.0 / op.outWidth, 68.0 / op.outHeight)
             Imagen(n, f, (op.outWidth * esc * EMU_POR_PT).roundToLong(), (op.outHeight * esc * EMU_POR_PT).roundToLong())
         }.associateBy { it.numero }
 
@@ -70,8 +70,10 @@ object GeneradorDocx {
             when (b) {
                 is Bloque.Parrafo -> {
                     val antes = if (primero) 0 else (b.espacioAntesPt * 20).toInt()
-                    cuerpo.append(parrafo(b.segmentos, b.alineacion, antes, (util * b.sangria).toInt()))
+                    val tam = (b.tamano * 2).toInt().takeIf { it != 23 }
+                    cuerpo.append(parrafo(b.segmentos, b.alineacion, antes, (util * b.sangria).toInt(), medioPuntos = tam))
                 }
+                is Bloque.Fila -> cuerpo.append(fila(b, if (primero) 0 else (b.espacioAntesPt * 20).toInt()))
                 is Bloque.Firmas -> cuerpo.append(firmas(b, util, imagenes))
             }
             primero = false
@@ -99,57 +101,70 @@ object GeneradorDocx {
 
     private fun parrafo(
         segmentos: List<Segmento>, alineacion: Alineacion, antes: Int, sangriaIzq: Int = 0,
-        sangriaDer: Int = 0, extraPPr: String = ""
+        sangriaDer: Int = 0, extraPPr: String = "", medioPuntos: Int? = null
     ): String {
         val ind = if (sangriaIzq > 0 || sangriaDer > 0) "<w:ind w:left=\"$sangriaIzq\" w:right=\"$sangriaDer\"/>" else ""
-        val runs = segmentos.joinToString("") { run(it) }
+        val runs = segmentos.joinToString("") { run(it, medioPuntos) }
         return "<w:p><w:pPr>$extraPPr<w:spacing w:before=\"$antes\" w:after=\"0\" w:line=\"283\" w:lineRule=\"auto\"/>$ind<w:jc w:val=\"${jc(alineacion)}\"/></w:pPr>$runs</w:p>"
+    }
+
+    // ------------------------------------------------------------------ filas A: / DE:
+
+    private const val COL_ETIQUETA = 1600 // 80 pt
+
+    private fun fila(f: Bloque.Fila, antes: Int): String {
+        val runs = StringBuilder()
+        runs.append(run(Segmento(f.etiqueta, negrita = true))).append("<w:r><w:tab/></w:r>")
+        f.lineas.forEachIndexed { i, segs ->
+            if (i > 0) runs.append("<w:r><w:br/></w:r>")
+            segs.forEach { runs.append(run(it)) }
+        }
+        return "<w:p><w:pPr><w:tabs><w:tab w:val=\"left\" w:pos=\"$COL_ETIQUETA\"/></w:tabs>" +
+            "<w:spacing w:before=\"$antes\" w:after=\"0\" w:line=\"283\" w:lineRule=\"auto\"/>" +
+            "<w:ind w:left=\"$COL_ETIQUETA\" w:hanging=\"$COL_ETIQUETA\"/><w:jc w:val=\"left\"/></w:pPr>$runs</w:p>"
     }
 
     // ------------------------------------------------------------------ firmas
 
     private fun firmas(b: Bloque.Firmas, util: Int, imagenes: Map<Int, Imagen>): String {
-        val anchoFirma = 3600 // 180 pt
         val antes = (b.espacioAntesPt * 20).toInt()
         return when (b.posicion) {
-            PosicionFirma.CENTRADA -> {
-                val lado = ((util - anchoFirma) / 2).coerceAtLeast(0)
-                bloqueFirma(b.firmas.first(), lado, lado, antes, imagenes)
-            }
-            PosicionFirma.IZQUIERDA ->
-                bloqueFirma(b.firmas.first(), 0, (util - anchoFirma).coerceAtLeast(0), antes, imagenes)
+            PosicionFirma.CENTRADA -> bloqueFirma(b.firmas.first(), 0, 0, antes, imagenes, b.linea)
+            PosicionFirma.IZQUIERDA -> bloqueFirma(b.firmas.first(), 0, util / 2, antes, imagenes, b.linea)
             PosicionFirma.DOBLE -> {
                 val col = util / 2
-                val lado = ((col - anchoFirma) / 2).coerceAtLeast(0)
                 val celdas = b.firmas.joinToString("") { f ->
-                    "<w:tc><w:tcPr><w:tcW w:w=\"$col\" w:type=\"dxa\"/></w:tcPr>${bloqueFirma(f, lado, lado, 0, imagenes)}</w:tc>"
+                    "<w:tc><w:tcPr><w:tcW w:w=\"$col\" w:type=\"dxa\"/></w:tcPr>${bloqueFirma(f, 0, 0, 0, imagenes, b.linea)}</w:tc>"
                 }
                 val sinBordes = listOf("top", "left", "bottom", "right", "insideH", "insideV")
                     .joinToString("") { "<w:$it w:val=\"nil\"/>" }
                 parrafo(emptyList(), Alineacion.IZQUIERDA, antes, extraPPr = "<w:keepNext/>") +
                     "<w:tbl><w:tblPr><w:tblW w:w=\"$util\" w:type=\"dxa\"/><w:tblBorders>$sinBordes</w:tblBorders>" +
-                    "<w:tblLayout w:type=\"fixed\"/><w:tblCellMar><w:left w:w=\"0\" w:type=\"dxa\"/><w:right w:w=\"0\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>" +
+                    "<w:tblLayout w:type=\"fixed\"/><w:tblCellMar><w:left w:w=\"80\" w:type=\"dxa\"/><w:right w:w=\"80\" w:type=\"dxa\"/></w:tblCellMar></w:tblPr>" +
                     "<w:tblGrid><w:gridCol w:w=\"$col\"/><w:gridCol w:w=\"$col\"/></w:tblGrid><w:tr><w:trPr><w:cantSplit/></w:trPr>$celdas</w:tr></w:tbl>" +
                     "<w:p/>"
             }
         }
     }
 
-    private fun bloqueFirma(f: FirmaHoja, izq: Int, der: Int, antes: Int, imagenes: Map<Int, Imagen>): String {
+    private fun bloqueFirma(f: FirmaHoja, izq: Int, der: Int, antes: Int, imagenes: Map<Int, Imagen>, linea: Boolean): String {
         val sb = StringBuilder()
-        val ind = "<w:ind w:left=\"$izq\" w:right=\"$der\"/>"
+        val ind = if (izq > 0 || der > 0) "<w:ind w:left=\"$izq\" w:right=\"$der\"/>" else ""
         val img = imagenes[f.numero]
-        val contenidoImagen = if (img != null) dibujo(img) else ""
-        // Espacio/imagen de la firma sobre la línea
+        // Espacio (o imagen) de la firma
         sb.append("<w:p><w:pPr><w:keepNext/><w:spacing w:before=\"$antes\" w:after=\"0\"/>$ind<w:jc w:val=\"center\"/></w:pPr>")
-        if (img == null) sb.append("<w:r><w:rPr><w:sz w:val=\"60\"/></w:rPr><w:t xml:space=\"preserve\"> </w:t></w:r>")
-        sb.append(contenidoImagen).append("</w:p>")
+        if (img != null) sb.append(dibujo(img))
+        else sb.append("<w:r><w:rPr><w:sz w:val=\"80\"/></w:rPr><w:t xml:space=\"preserve\"> </w:t></w:r>")
+        sb.append("</w:p>")
+        if (linea) {
+            sb.append("<w:p><w:pPr><w:keepNext/><w:spacing w:before=\"0\" w:after=\"0\"/>$ind<w:jc w:val=\"center\"/></w:pPr>")
+            sb.append(run(Segmento("______________________________"))).append("</w:p>")
+        }
         val lineas = f.lineas.ifEmpty { listOf(Segmento(" ")) }
         lineas.forEachIndexed { i, s ->
-            val borde = if (i == 0) "<w:pBdr><w:top w:val=\"single\" w:sz=\"6\" w:space=\"2\" w:color=\"000000\"/></w:pBdr>" else ""
             val keep = if (i < lineas.lastIndex) "<w:keepNext/>" else ""
-            sb.append("<w:p><w:pPr>$keep$borde<w:spacing w:before=\"0\" w:after=\"0\"/>$ind<w:jc w:val=\"center\"/></w:pPr>")
-            sb.append(run(s, 21))
+            sb.append("<w:p><w:pPr>$keep<w:spacing w:before=\"0\" w:after=\"0\"/>$ind<w:jc w:val=\"center\"/></w:pPr>")
+            sb.append(run(s, 22))
             sb.append("</w:p>")
         }
         return sb.toString()
@@ -180,7 +195,7 @@ object GeneradorDocx {
     }
 
     private fun core(carta: Carta) = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>${esc(carta.referencia.ifBlank { carta.tipo.titulo })}</dc:title><dc:creator>${esc(ComposicionCarta.nombreFirmante1(carta).ifBlank { "CartasPro" })}</dc:creator></cp:coreProperties>"""
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>${esc(carta.asunto.ifBlank { carta.tipo.titulo })}</dc:title><dc:creator>${esc(ComposicionCarta.nombreFirmante1(carta).ifBlank { "CartasPro" })}</dc:creator></cp:coreProperties>"""
 
     private fun esc(s: String) = buildString(s.length) {
         s.forEach { ch ->

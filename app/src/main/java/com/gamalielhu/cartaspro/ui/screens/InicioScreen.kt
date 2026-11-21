@@ -24,6 +24,12 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilterChip
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.material.icons.filled.Build
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -37,19 +43,27 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.gamalielhu.cartaspro.model.Grupo
 import com.gamalielhu.cartaspro.model.TipoCarta
 import com.gamalielhu.cartaspro.ui.CartasViewModel
 
 private fun icono(t: TipoCarta): ImageVector = when (t) {
+    TipoCarta.SOLICITUD_PAGO -> Icons.Filled.Star
+    TipoCarta.ENTREGA_PROVISIONAL, TipoCarta.ENTREGA_DEFINITIVA -> Icons.Filled.Build
+    TipoCarta.DEVOLUCION_GARANTIA -> Icons.Filled.Refresh
+    TipoCarta.CERTIFICACION_PROYECTOS, TipoCarta.CERTIFICADO_TRABAJO -> Icons.Filled.Check
+    TipoCarta.SOLICITUD_PERSONAL, TipoCarta.AUTORIZACION, TipoCarta.RECOMENDACION -> Icons.Filled.Person
     TipoCarta.SOLICITUD -> Icons.AutoMirrored.Filled.Send
     TipoCarta.NOTIFICACION -> Icons.Filled.Notifications
-    TipoCarta.PRESENTACION -> Icons.Filled.Star
-    TipoCarta.LIBRE -> Icons.Filled.Edit
+    else -> Icons.Filled.Edit
 }
 
 @Composable
 fun InicioScreen(vm: CartasViewModel) {
     val carta by vm.carta.collectAsState()
+    val perfiles by vm.perfiles.collectAsState()
+    val personal = perfiles.firstOrNull { it.id == carta.perfilId }?.personal ?: false
+    val grupos = if (personal) listOf(Grupo.PERSONAL, Grupo.GENERAL, Grupo.OBRAS) else listOf(Grupo.OBRAS, Grupo.GENERAL, Grupo.PERSONAL)
     Scaffold { pad ->
         Column(
             Modifier.fillMaxSize().padding(pad).verticalScroll(rememberScrollState()).padding(20.dp),
@@ -81,7 +95,7 @@ fun InicioScreen(vm: CartasViewModel) {
                         Column(Modifier.weight(1f)) {
                             Text("Continuar la última carta", fontWeight = FontWeight.SemiBold)
                             Text(
-                                carta.referencia.ifBlank { carta.tipo.titulo },
+                                listOf(carta.tipo.titulo, carta.proyecto).filter { it.isNotBlank() }.joinToString(" · "),
                                 style = MaterialTheme.typography.bodySmall, maxLines = 1
                             )
                         }
@@ -89,28 +103,38 @@ fun InicioScreen(vm: CartasViewModel) {
                 }
             }
 
-            Text("Nueva carta", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            TipoCarta.entries.forEach { t ->
-                ElevatedCard(Modifier.fillMaxWidth().clickable { vm.elegirPlantilla(t) }) {
-                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.secondaryContainer,
-                            modifier = Modifier.size(44.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) { Icon(icono(t), null) }
-                        }
-                        Spacer(Modifier.size(14.dp))
-                        Column {
-                            Text(t.titulo, style = MaterialTheme.typography.titleMedium)
-                            Text(t.descripcion, style = MaterialTheme.typography.bodySmall)
+            Text("¿Para quién es la carta?", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                perfiles.forEach { p ->
+                    FilterChip(selected = p.id == carta.perfilId, onClick = { vm.elegirPerfil(p.id) }, label = { Text(p.nombre) })
+                }
+            }
+
+            grupos.forEach { g ->
+                Text(g.titulo, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(top = 8.dp))
+                TipoCarta.entries.filter { it.grupo == g }.forEach { t ->
+                    ElevatedCard(Modifier.fillMaxWidth().clickable { vm.elegirPlantilla(t) }) {
+                        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                                modifier = Modifier.size(42.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) { Icon(icono(t), null) }
+                            }
+                            Spacer(Modifier.size(14.dp))
+                            Column {
+                                Text(t.titulo, style = MaterialTheme.typography.titleMedium)
+                                Text(t.descripcion, style = MaterialTheme.typography.bodySmall)
+                            }
                         }
                     }
                 }
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                "Tus datos de remitente, ciudad y firma se guardan solos para la próxima carta.",
+                "Cada empresa guarda sus datos y su formato. Lo que escribes se guarda solo.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

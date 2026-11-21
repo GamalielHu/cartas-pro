@@ -21,6 +21,8 @@ import com.gamalielhu.cartaspro.model.Carta
 import com.gamalielhu.cartaspro.model.ComposicionCarta
 import com.gamalielhu.cartaspro.model.Fuente
 import com.gamalielhu.cartaspro.model.PosicionFirma
+import com.gamalielhu.cartaspro.model.Segmento
+import kotlin.math.max
 import kotlin.math.min
 
 /**
@@ -39,6 +41,7 @@ class RenderizadorCarta(private val carta: Carta, firmas: FirmaStore) {
     private val margenInf = 64f
     private val anchoUtil = anchoPt - margenIzq - margenDer
     private val limite = altoPt - margenInf - 14f // reserva para el n° de página
+    private val anchoEtiqueta = 80f
 
     private val tipoBase: Typeface = if (carta.fuente == Fuente.SERIF) Typeface.SERIF else Typeface.SANS_SERIF
     private val tipoNegrita: Typeface = Typeface.create(tipoBase, Typeface.BOLD)
@@ -85,53 +88,82 @@ class RenderizadorCarta(private val carta: Carta, firmas: FirmaStore) {
         }
         fun ops() = paginas.last()
 
+        /** Coloca un layout partiéndolo por líneas entre páginas. */
+        fun colocar(layout: StaticLayout, x: Float, extra: ((Canvas, Float) -> Unit)? = null) {
+            var linea = 0
+            var primeraParte = true
+            while (linea < layout.lineCount) {
+                val topLinea = layout.getLineTop(linea).toFloat()
+                var fin = linea
+                while (fin < layout.lineCount && y + (layout.getLineBottom(fin) - topLinea) <= limite) fin++
+                if (fin == linea) {
+                    if (y <= margenSup) fin = linea + 1 else { nuevaPagina(); continue }
+                }
+                val bottom = layout.getLineBottom(fin - 1).toFloat()
+                val yy = y
+                val w = layout.width.toFloat()
+                val conExtra = primeraParte
+                ops() += { c ->
+                    if (conExtra) extra?.invoke(c, yy)
+                    c.save()
+                    c.translate(x, yy - topLinea)
+                    c.clipRect(-2f, topLinea, w + 2f, bottom)
+                    layout.draw(c)
+                    c.restore()
+                }
+                primeraParte = false
+                y += bottom - topLinea
+                linea = fin
+                if (linea < layout.lineCount) nuevaPagina()
+            }
+        }
+
         for (bloque in ComposicionCarta.componer(carta)) {
             when (bloque) {
                 is Bloque.Parrafo -> {
                     val sangriaPt = anchoUtil * bloque.sangria
-                    val layout = crearLayout(bloque, (anchoUtil - sangriaPt).toInt())
+                    val layout = crearLayout(bloque.segmentos, bloque.alineacion, (anchoUtil - sangriaPt).toInt(), bloque.tamano)
                     if (y > margenSup) y += bloque.espacioAntesPt
-                    var linea = 0
-                    while (linea < layout.lineCount) {
-                        val topLinea = layout.getLineTop(linea).toFloat()
-                        var fin = linea
-                        while (fin < layout.lineCount && y + (layout.getLineBottom(fin) - topLinea) <= limite) fin++
-                        if (fin == linea) {
-                            if (y <= margenSup) fin = linea + 1 else { nuevaPagina(); continue }
-                        }
-                        val bottom = layout.getLineBottom(fin - 1).toFloat()
-                        val yy = y
-                        val x = margenIzq + sangriaPt
-                        val w = anchoUtil - sangriaPt
-                        ops() += { c ->
-                            c.save()
-                            c.translate(x, yy - topLinea)
-                            c.clipRect(-2f, topLinea, w + 2f, bottom)
-                            layout.draw(c)
-                            c.restore()
-                        }
-                        y += bottom - topLinea
-                        linea = fin
-                        if (linea < layout.lineCount) nuevaPagina()
+                    colocar(layout, margenIzq + sangriaPt)
+                }
+                is Bloque.Fila -> {
+                    if (y > margenSup) y += bloque.espacioAntesPt
+                    val ancho = (anchoUtil - anchoEtiqueta).toInt()
+                    bloque.lineas.forEachIndexed { i, segs ->
+                        val layout = crearLayout(segs, Alineacion.IZQUIERDA, ancho, 11.5f)
+                        val etiqueta = if (i == 0) bloque.etiqueta else null
+                        colocar(layout, margenIzq + anchoEtiqueta, etiqueta?.let { e ->
+                            { c: Canvas, yy: Float ->
+                                val p = TextPaint(pintura).apply { typeface = tipoNegrita }
+                                c.drawText(e, margenIzq, yy - p.fontMetrics.ascent, p)
+                            }
+                        })
                     }
                 }
                 is Bloque.Firmas -> {
-                    val altoImagen = 58f
-                    val altoLinea = 13.5f
-                    val maxLineas = bloque.firmas.maxOf { it.lineas.size }
-                    val alto = altoImagen + 6f + maxLineas * altoLinea
+                    val altoImagen = 62f
+                    val anchoCol = when (bloque.posicion) {
+                        PosicionFirma.CENTRADA -> anchoUtil
+                        PosicionFirma.IZQUIERDA -> anchoUtil * 0.55f
+                        PosicionFirma.DOBLE -> anchoUtil / 2f - 8f
+                    }
+                    val layouts = bloque.firmas.map { f ->
+                        crearLayout(f.lineas.ifEmpty { listOf(Segmento(" ")) }, Alineacion.CENTRO, anchoCol.toInt(), 11f, 1.05f)
+                    }
+                    val alto = altoImagen + 6f + layouts.maxOf { it.height }
                     if (y > margenSup) y += bloque.espacioAntesPt
                     if (y + alto > limite) nuevaPagina()
                     val yy = y
-                    val centros = when (bloque.posicion) {
-                        PosicionFirma.CENTRADA -> listOf(margenIzq + anchoUtil / 2f)
-                        PosicionFirma.IZQUIERDA -> listOf(margenIzq + 95f)
-                        PosicionFirma.DOBLE -> listOf(margenIzq + anchoUtil * 0.25f, margenIzq + anchoUtil * 0.75f)
+                    val izquierdas = when (bloque.posicion) {
+                        PosicionFirma.CENTRADA -> listOf(margenIzq)
+                        PosicionFirma.IZQUIERDA -> listOf(margenIzq)
+                        PosicionFirma.DOBLE -> listOf(margenIzq, margenIzq + anchoUtil / 2f + 8f)
                     }
                     bloque.firmas.forEachIndexed { i, firma ->
-                        val cx = centros.getOrElse(i) { centros.last() }
+                        val x = izquierdas.getOrElse(i) { izquierdas.last() }
                         val img = imagenes[firma.numero]
-                        ops() += { c -> dibujarFirma(c, cx, yy, altoImagen, altoLinea, img, firma.lineas) }
+                        val layout = layouts[i]
+                        ops() += { c -> dibujarFirma(c, x, anchoCol, yy, altoImagen, img, layout, bloque.linea) }
                     }
                     y += alto
                 }
@@ -141,52 +173,50 @@ class RenderizadorCarta(private val carta: Carta, firmas: FirmaStore) {
     }
 
     private fun dibujarFirma(
-        c: Canvas, cx: Float, y: Float, altoImagen: Float, altoLinea: Float,
-        img: Bitmap?, lineas: List<com.gamalielhu.cartaspro.model.Segmento>
+        c: Canvas, x: Float, ancho: Float, y: Float, altoImagen: Float,
+        img: Bitmap?, texto: StaticLayout, linea: Boolean
     ) {
-        val anchoLinea = 180f
-        val yLinea = y + altoImagen
+        val cx = x + ancho / 2f
+        val yBase = y + altoImagen
         if (img != null) {
-            val maxW = 170f
-            val maxH = altoImagen + 8f
-            val esc = min(maxW / img.width, maxH / img.height)
+            val esc = min(170f / img.width, (altoImagen + 6f) / img.height)
             val w = img.width * esc
             val h = img.height * esc
-            val dst = RectF(cx - w / 2f, yLinea + 8f - h, cx + w / 2f, yLinea + 8f)
+            val dst = RectF(cx - w / 2f, yBase + 6f - h, cx + w / 2f, yBase + 6f)
             c.drawBitmap(img, null, dst, Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))
         }
-        val trazo = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; strokeWidth = 0.7f }
-        c.drawLine(cx - anchoLinea / 2f, yLinea, cx + anchoLinea / 2f, yLinea, trazo)
-        var yy = yLinea + 6f + altoLinea - 3f
-        lineas.forEach { s ->
-            val p = TextPaint(pintura).apply {
-                textAlign = Paint.Align.CENTER
-                textSize = 10.5f
-                typeface = if (s.negrita) tipoNegrita else tipoBase
-            }
-            c.drawText(s.texto, cx, yy, p)
-            yy += altoLinea
+        if (linea) {
+            val anchoLinea = max(150f, min(ancho - 10f, texto.getLineWidth(0) + 20f))
+            val trazo = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; strokeWidth = 0.7f }
+            c.drawLine(cx - anchoLinea / 2f, yBase + 2f, cx + anchoLinea / 2f, yBase + 2f, trazo)
         }
+        c.save()
+        c.translate(x, yBase + 6f)
+        texto.draw(c)
+        c.restore()
     }
 
-    private fun crearLayout(p: Bloque.Parrafo, ancho: Int): StaticLayout {
+    private fun crearLayout(
+        segmentos: List<Segmento>, alineacionP: Alineacion, ancho: Int, tamano: Float, interlineado: Float = 1.18f
+    ): StaticLayout {
         val texto = SpannableStringBuilder()
-        p.segmentos.forEach { s ->
+        segmentos.forEach { s ->
             val ini = texto.length
             texto.append(s.texto)
             if (s.negrita) texto.setSpan(StyleSpan(Typeface.BOLD), ini, texto.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             if (s.subrayado) texto.setSpan(UnderlineSpan(), ini, texto.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         }
-        val alineacion = when (p.alineacion) {
+        val alineacion = when (alineacionP) {
             Alineacion.DERECHA -> Layout.Alignment.ALIGN_OPPOSITE
             Alineacion.CENTRO -> Layout.Alignment.ALIGN_CENTER
             else -> Layout.Alignment.ALIGN_NORMAL
         }
-        val b = StaticLayout.Builder.obtain(texto, 0, texto.length, pintura, ancho.coerceAtLeast(10))
+        val p = if (tamano == pintura.textSize) pintura else TextPaint(pintura).apply { textSize = tamano }
+        val b = StaticLayout.Builder.obtain(texto, 0, texto.length, p, ancho.coerceAtLeast(10))
             .setAlignment(alineacion)
-            .setLineSpacing(0f, 1.18f)
+            .setLineSpacing(0f, interlineado)
             .setIncludePad(false)
-        if (p.alineacion == Alineacion.JUSTIFICADO) b.setJustificationMode(Layout.JUSTIFICATION_MODE_INTER_WORD)
+        if (alineacionP == Alineacion.JUSTIFICADO) b.setJustificationMode(Layout.JUSTIFICATION_MODE_INTER_WORD)
         return b.build()
     }
 }

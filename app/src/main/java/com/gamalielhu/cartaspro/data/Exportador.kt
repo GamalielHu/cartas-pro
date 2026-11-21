@@ -17,10 +17,11 @@ enum class Formato(val extension: String, val mime: String, val titulo: String) 
 object Exportador {
 
     fun nombreArchivo(c: Carta, formato: Formato): String {
-        val base = c.referencia.ifBlank { c.tipo.titulo }
+        val base = listOf(c.tipo.titulo, c.proyecto.ifBlank { c.campo("profesional") })
+            .filter { it.isNotBlank() }.joinToString(" - ")
             .replace(Regex("[^\\p{L}\\p{N} _-]"), " ")
-            .replace(Regex("\\s+"), " ").trim().take(50).ifBlank { "Carta" }
-        return "Carta - $base.${formato.extension}"
+            .replace(Regex("\\s+"), " ").trim().take(70).ifBlank { "Carta" }
+        return "$base.${formato.extension}"
     }
 
     /** Genera el archivo en cache/compartir y lo devuelve. */
