@@ -209,11 +209,7 @@ fun HojaEditable(vm: CartasViewModel, carta: Carta, version: Int, alDibujarFirma
             Surface(color = Color.White, modifier = Modifier.fillMaxWidth().shadow(4.dp)) {
                 Column(Modifier.padding(start = 26.dp, end = 20.dp, top = 24.dp, bottom = 30.dp)) {
 
-                    if (carta.mostrarMembrete) {
-                        CampoHoja(carta.membrete, { v -> vm.actualizar { it.copy(membrete = v) } }, negrita.copy(fontSize = 13.5.sp),
-                            "MEMBRETE DE LA EMPRESA", alineacion = TextAlign.Center)
-                        Spacer(Modifier.height(esp))
-                    }
+                    if (carta.mostrarMembrete) EncabezadoHoja(vm, carta, version, negrita)
 
                     when (carta.estilo) {
                         Estilo.CLASICA -> {
@@ -307,7 +303,7 @@ fun HojaEditable(vm: CartasViewModel, carta: Carta, version: Int, alDibujarFirma
                         PosicionFirma.CENTRADA -> Column(Modifier.fillMaxWidth()) { FirmaHoja1(vm, carta, version, negrita, alDibujarFirma) }
                     }
                     if (carta.copiaArchivo) {
-                        Spacer(Modifier.height(18.dp))
+                        Spacer(Modifier.height(40.dp))
                         Text("Cc/arch.", style = base.copy(fontSize = 10.sp))
                     }
                 }
@@ -315,6 +311,31 @@ fun HojaEditable(vm: CartasViewModel, carta: Carta, version: Int, alDibujarFirma
             Spacer(Modifier.height(80.dp))
         }
     }
+}
+
+@Composable
+private fun EncabezadoHoja(vm: CartasViewModel, carta: Carta, version: Int, negrita: TextStyle) {
+    val logo = remember(carta.perfilId, version) {
+        vm.logos.archivo(carta.perfilId)?.let { BitmapFactory.decodeFile(it.path) }
+    }
+    val lineas = carta.membrete.lines().filter { it.isNotBlank() }
+    if (logo == null && lineas.isEmpty() && !carta.lineaEncabezado) return
+    // En el celular la hoja útil mide ~295 dp para ~456 pt: ~0.64 dp por punto.
+    val escala = 0.64f
+    Row(verticalAlignment = Alignment.Top, modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+        if (logo != null) {
+            val w = (carta.logoAnchoPt * escala).dp
+            Image(logo.asImageBitmap(), "Logo", Modifier.width(w).height(w * logo.height / logo.width), contentScale = ContentScale.Fit)
+            Spacer(Modifier.width(8.dp))
+        }
+        if (lineas.isNotEmpty()) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                lineas.forEach { Text(it.trim(), style = negrita.copy(fontSize = 7.5.sp, lineHeight = 9.sp)) }
+            }
+        }
+    }
+    if (carta.lineaEncabezado) Box(Modifier.fillMaxWidth().height(1.dp).background(Color.Black))
+    Spacer(Modifier.height(16.dp))
 }
 
 @Composable

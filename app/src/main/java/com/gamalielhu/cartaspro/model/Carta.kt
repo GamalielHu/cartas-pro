@@ -67,7 +67,11 @@ data class Perfil(
     val copiaArchivo: Boolean = false,
     val datosBajoFirma: Boolean = false,
     val fuente: Fuente = Fuente.SERIF,
-    val papel: Papel = Papel.CARTA
+    val papel: Papel = Papel.CARTA,
+    /** Ancho del logo del encabezado en puntos (el logo es filesDir/logo_<id>.png). */
+    val logoAnchoPt: Float = 117f,
+    /** Línea horizontal bajo el encabezado de página. */
+    val lineaEncabezado: Boolean = false
 )
 
 data class Destinatario(
@@ -92,8 +96,12 @@ data class Carta(
     val remEmpresa: String = "",
     val remCi: String = "",
     val remTelefono: String = "",
+    /** Texto del encabezado de página (una línea por renglón). */
     val membrete: String = "",
-    val mostrarMembrete: Boolean = false,
+    /** Mostrar encabezado de página (logo + membrete + línea). */
+    val mostrarMembrete: Boolean = true,
+    val logoAnchoPt: Float = 117f,
+    val lineaEncabezado: Boolean = false,
     val destEncabezado: String = "Señores:",
     val destTratamiento: String = "",
     val destNombre: String = "",
@@ -140,20 +148,31 @@ sealed interface Bloque {
         val espacioAntesPt: Float = 0f,
         /** Sangría izquierda como fracción del ancho útil (0..1). */
         val sangria: Float = 0f,
-        val tamano: Float = 11.5f
+        val tamano: Float = 11.5f,
+        /** Peso para repartir el espacio libre de la hoja antes de este bloque. */
+        val elastico: Float = 0f
     ) : Bloque
 
     /** Fila "ETIQUETA:  valor" del formato A / DE / REF (valor en una o varias líneas). */
     data class Fila(
         val etiqueta: String,
         val lineas: List<List<Segmento>>,
-        val espacioAntesPt: Float = 0f
+        val espacioAntesPt: Float = 0f,
+        val elastico: Float = 0f
     ) : Bloque
 
     data class Firmas(
         val firmas: List<FirmaHoja>,
         val posicion: PosicionFirma,
         val espacioAntesPt: Float,
-        val linea: Boolean
+        val linea: Boolean,
+        val elastico: Float = 0f
     ) : Bloque
 }
+
+val Bloque.elasticidad: Float
+    get() = when (this) {
+        is Bloque.Parrafo -> elastico
+        is Bloque.Fila -> elastico
+        is Bloque.Firmas -> elastico
+    }

@@ -61,6 +61,7 @@ class PreferenciasCarta(private val context: Context) {
         put("f2Nombre", c.firmante2Nombre); put("f2Cargo", c.firmante2Cargo)
         put("datosBajoFirma", c.datosBajoFirma); put("lineaFirma", c.lineaFirma); put("copiaArchivo", c.copiaArchivo)
         put("papel", c.papel.name); put("fuente", c.fuente.name)
+        put("logoAnchoPt", c.logoAnchoPt.toDouble()); put("lineaEncabezado", c.lineaEncabezado)
     }
 
     private fun cartaDe(o: JSONObject): Carta {
@@ -73,7 +74,8 @@ class PreferenciasCarta(private val context: Context) {
             lugarFecha = o.optString("lugarFecha"),
             remNombre = o.optString("remNombre"), remCargo = o.optString("remCargo"),
             remEmpresa = o.optString("remEmpresa"), remCi = o.optString("remCi"), remTelefono = o.optString("remTelefono"),
-            membrete = o.optString("membrete"), mostrarMembrete = o.optBoolean("mostrarMembrete"),
+            membrete = o.optString("membrete"), mostrarMembrete = o.optBoolean("mostrarMembrete", true),
+            logoAnchoPt = o.optDouble("logoAnchoPt", 117.0).toFloat(), lineaEncabezado = o.optBoolean("lineaEncabezado"),
             destEncabezado = o.optString("destEncabezado", d.destEncabezado),
             destTratamiento = o.optString("destTratamiento"), destNombre = o.optString("destNombre"),
             destCargo = o.optString("destCargo"), destInstitucion = o.optString("destInstitucion"),
@@ -104,7 +106,9 @@ class PreferenciasCarta(private val context: Context) {
                     ciudad = o.optString("ciudad", "Potosí"), membrete = o.optString("membrete"),
                     estilo = enumDe(o.optString("estilo"), Estilo.CLASICA),
                     copiaArchivo = o.optBoolean("copiaArchivo"), datosBajoFirma = o.optBoolean("datosBajoFirma"),
-                    fuente = enumDe(o.optString("fuente"), Fuente.SERIF), papel = enumDe(o.optString("papel"), Papel.CARTA)
+                    fuente = enumDe(o.optString("fuente"), Fuente.SERIF), papel = enumDe(o.optString("papel"), Papel.CARTA),
+                    logoAnchoPt = o.optDouble("logoAnchoPt", 117.0).toFloat(),
+                    lineaEncabezado = o.optBoolean("lineaEncabezado", p0(o.getString("id")))
                 )
             }.ifEmpty { Plantillas.perfilesIniciales }
         }.getOrDefault(Plantillas.perfilesIniciales)
@@ -119,10 +123,14 @@ class PreferenciasCarta(private val context: Context) {
                 put("ci", p.ci); put("telefono", p.telefono); put("ciudad", p.ciudad); put("membrete", p.membrete)
                 put("estilo", p.estilo.name); put("copiaArchivo", p.copiaArchivo); put("datosBajoFirma", p.datosBajoFirma)
                 put("fuente", p.fuente.name); put("papel", p.papel.name)
+                put("logoAnchoPt", p.logoAnchoPt.toDouble()); put("lineaEncabezado", p.lineaEncabezado)
             })
         }
         context.almacen.edit { it[K.perfiles] = a.toString() }
     }
+
+    /** Valor de fábrica de la línea de encabezado para perfiles guardados por la v1.2. */
+    private fun p0(id: String) = Plantillas.perfilesIniciales.firstOrNull { it.id == id }?.lineaEncabezado ?: false
 
     // ------------------------------------------------------------ destinatarios recientes
 

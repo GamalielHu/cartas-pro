@@ -261,13 +261,13 @@ object Plantillas {
             cargo = "REPRESENTANTE LEGAL",
             empresa = "EMPRESA CONSTRUCTORA Y CONSULTORA HERHUAS S.R.L.", ciudad = "Potosí",
             membrete = "EMPRESA CONSTRUCTORA Y CONSULTORA\nHERHUAS S.R.L.\nPOTOSÍ – BOLIVIA",
-            estilo = Estilo.MEMORANDO, copiaArchivo = true
+            estilo = Estilo.MEMORANDO, copiaArchivo = true, lineaEncabezado = true
         ),
         Perfil(
             id = "josral", nombre = "GRUPO JOSRAL",
             cargo = "REPRESENTANTE LEGAL",
             empresa = "EMPRESA CONSTRUCTORA Y CONSULTORA GRUPO JOSRAL (ECYCGJ) S.R.L.", ciudad = "Potosí",
-            estilo = Estilo.CLASICA
+            estilo = Estilo.CLASICA, copiaArchivo = true
         ),
         Perfil(
             id = "personal", nombre = "Personal", personal = true,

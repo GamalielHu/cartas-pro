@@ -34,20 +34,14 @@ object ComposicionCarta {
         val b = mutableListOf<Bloque>()
         val izq = Alineacion.IZQUIERDA
 
-        // Membrete de la empresa
-        if (c.mostrarMembrete && c.membrete.isNotBlank()) {
-            c.membrete.lines().map { it.trim() }.filter { it.isNotEmpty() }.forEach {
-                b += Bloque.Parrafo(listOf(Segmento(it, negrita = true)), Alineacion.CENTRO, tamano = 12.5f)
-            }
-        }
-
+        // El membrete/logo va en el encabezado de página (lo dibuja el renderizador).
         when (c.estilo) {
             Estilo.CLASICA -> encabezadoClasico(c, b)
             Estilo.MEMORANDO -> encabezadoMemorando(c, b)
             Estilo.CERTIFICADO -> if (c.titulo.isNotBlank()) {
                 b += Bloque.Parrafo(
                     listOf(Segmento(c.titulo.trim().uppercase(), negrita = true, subrayado = true)),
-                    Alineacion.CENTRO, espacioAntesPt = 40f, tamano = 14f
+                    Alineacion.CENTRO, espacioAntesPt = 30f, tamano = 14f, elastico = 1.5f
                 )
             }
         }
@@ -62,7 +56,8 @@ object ComposicionCarta {
                     primero -> if (c.estilo == Estilo.CERTIFICADO) 30f else 20f
                     else -> 10f
                 }
-                b += Bloque.Parrafo(segmentos(l), Alineacion.JUSTIFICADO, espacioAntesPt = espacio)
+                val elastico = if (i == 0 && primero) (if (c.estilo == Estilo.MEMORANDO) 1.5f else 1.2f) else 0f
+                b += Bloque.Parrafo(segmentos(l), Alineacion.JUSTIFICADO, espacioAntesPt = espacio, elastico = elastico)
             }
             if (lineas.isNotEmpty()) primero = false
         }
@@ -70,7 +65,7 @@ object ComposicionCarta {
         if (c.despedida.isNotBlank()) b += Bloque.Parrafo(segmentos(c.despedida.trim()), izq, espacioAntesPt = 14f)
 
         if (c.estilo == Estilo.CERTIFICADO && c.lugarFecha.isNotBlank()) {
-            b += Bloque.Parrafo(listOf(Segmento(c.lugarFecha.trim(), negrita = true)), Alineacion.DERECHA, espacioAntesPt = 20f)
+            b += Bloque.Parrafo(listOf(Segmento(c.lugarFecha.trim(), negrita = true)), Alineacion.DERECHA, espacioAntesPt = 20f, elastico = 1f)
         }
 
         // Firmas (todas las líneas en negrita, como en los modelos)
@@ -83,22 +78,23 @@ object ComposicionCarta {
         if (c.posicionFirma == PosicionFirma.DOBLE) {
             firmas += FirmaHoja(2, conTexto(c.firmante2Nombre, c.firmante2Cargo).map { Segmento(it, negrita = true) })
         }
-        b += Bloque.Firmas(firmas, c.posicionFirma, espacioAntesPt = 30f, linea = c.lineaFirma)
-
-        if (c.copiaArchivo) b += Bloque.Parrafo(listOf(Segmento("Cc/arch.")), izq, espacioAntesPt = 24f, tamano = 9.5f)
+        b += Bloque.Firmas(firmas, c.posicionFirma, espacioAntesPt = 30f, linea = c.lineaFirma, elastico = 3f)
+        // "Cc/arch." va al pie de página (lo dibuja el renderizador).
         return b
     }
 
     private fun encabezadoClasico(c: Carta, b: MutableList<Bloque>) {
         val izq = Alineacion.IZQUIERDA
-        val tieneMembrete = c.mostrarMembrete && c.membrete.isNotBlank()
         if (c.lugarFecha.isNotBlank()) {
-            b += Bloque.Parrafo(listOf(Segmento(c.lugarFecha.trim())), izq, espacioAntesPt = if (tieneMembrete) 24f else 0f)
+            b += Bloque.Parrafo(listOf(Segmento(c.lugarFecha.trim())), izq, espacioAntesPt = 10f, elastico = 0.5f)
         }
         var primero = true
         fun linea(texto: String, negrita: Boolean = true) {
             if (texto.isBlank()) return
-            b += Bloque.Parrafo(listOf(Segmento(texto.trim(), negrita)), izq, espacioAntesPt = if (primero) 24f else 0f)
+            b += Bloque.Parrafo(
+                listOf(Segmento(texto.trim(), negrita)), izq,
+                espacioAntesPt = if (primero) 24f else 0f, elastico = if (primero) 1f else 0f
+            )
             primero = false
         }
         linea(c.destEncabezado, negrita = false)
@@ -111,7 +107,7 @@ object ComposicionCarta {
         if (c.asunto.isNotBlank() || c.proyecto.isNotBlank()) {
             b += Bloque.Parrafo(
                 listOf(Segmento("REF.: ", negrita = true), Segmento(c.asunto.trim().uppercase(), negrita = true)),
-                Alineacion.JUSTIFICADO, espacioAntesPt = 18f
+                Alineacion.JUSTIFICADO, espacioAntesPt = 18f, elastico = 1f
             )
             if (c.proyecto.isNotBlank()) {
                 b += Bloque.Parrafo(listOf(Segmento("“${c.proyecto.trim().uppercase()}”", negrita = true)), Alineacion.JUSTIFICADO, sangria = 0.08f)
@@ -127,7 +123,7 @@ object ComposicionCarta {
             conTexto(c.destCargo.uppercase(), c.destInstitucion.uppercase()).joinToString(" ")
         )
         val de = lineasDe(c.remNombre, conTexto(c.remCargo.uppercase(), c.remEmpresa.uppercase()).joinToString(" "))
-        b += Bloque.Fila("A:", a.ifEmpty { listOf(listOf(Segmento(" "))) }, espacioAntesPt = 28f)
+        b += Bloque.Fila("A:", a.ifEmpty { listOf(listOf(Segmento(" "))) }, espacioAntesPt = 20f, elastico = 1f)
         b += Bloque.Fila("DE:", de.ifEmpty { listOf(listOf(Segmento(" "))) }, espacioAntesPt = 10f)
         if (c.proyecto.isNotBlank()) b += Bloque.Fila("REF.:", lineasDe(c.proyecto.uppercase(), negrita = true), espacioAntesPt = 10f)
         if (c.asunto.isNotBlank()) b += Bloque.Fila("OBJETO:", lineasDe(c.asunto.uppercase(), negrita = true), espacioAntesPt = 10f)

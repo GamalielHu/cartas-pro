@@ -10,6 +10,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.gamalielhu.cartaspro.data.Exportador
 import com.gamalielhu.cartaspro.data.FirmaStore
+import com.gamalielhu.cartaspro.data.ImportadorDocx
+import com.gamalielhu.cartaspro.data.LogoStore
+import com.gamalielhu.cartaspro.model.Fuente
 import com.gamalielhu.cartaspro.data.Formato
 import com.gamalielhu.cartaspro.data.PreferenciasCarta
 import com.gamalielhu.cartaspro.data.Trazo
@@ -46,6 +49,7 @@ class CartasViewModel(app: Application) : AndroidViewModel(app) {
 
     private val prefs = PreferenciasCarta(app)
     val firmas = FirmaStore(app)
+    val logos = LogoStore(app)
 
     private val _carta = MutableStateFlow(Carta())
     val carta: StateFlow<Carta> = _carta.asStateFlow()
@@ -91,7 +95,7 @@ class CartasViewModel(app: Application) : AndroidViewModel(app) {
                 .collectLatest { c ->
                     _paginas.value = withContext(Dispatchers.Default) {
                         runCatching {
-                            val r = RenderizadorCarta(c, firmas)
+                            val r = RenderizadorCarta(c, firmas, logos)
                             (0 until r.totalPaginas).map { r.paginaBitmap(it, 2f) }
                         }.getOrDefault(emptyList())
                     }
@@ -152,7 +156,8 @@ class CartasViewModel(app: Application) : AndroidViewModel(app) {
             remNombre = p.representante, remCargo = p.cargo, remEmpresa = p.empresa,
             remCi = p.ci, remTelefono = p.telefono, membrete = p.membrete,
             estilo = estilo,
-            mostrarMembrete = p.membrete.isNotBlank() && estilo == Estilo.MEMORANDO,
+            mostrarMembrete = true,
+            logoAnchoPt = p.logoAnchoPt, lineaEncabezado = p.lineaEncabezado,
             copiaArchivo = p.copiaArchivo, datosBajoFirma = p.datosBajoFirma,
             fuente = p.fuente, papel = p.papel,
             firmante1Nombre = "", firmante1Cargo = "",
@@ -177,7 +182,8 @@ class CartasViewModel(app: Application) : AndroidViewModel(app) {
                     ciudad = ComposicionCarta.ciudadDe(c.lugarFecha).ifBlank { p.ciudad },
                     estilo = if (c.tipo.estiloFijo == null) c.estilo else p.estilo,
                     copiaArchivo = c.copiaArchivo, datosBajoFirma = c.datosBajoFirma,
-                    fuente = c.fuente, papel = c.papel
+                    fuente = c.fuente, papel = c.papel,
+                    logoAnchoPt = c.logoAnchoPt, lineaEncabezado = c.lineaEncabezado
                 )
             }
         }
@@ -199,6 +205,50 @@ class CartasViewModel(app: Application) : AndroidViewModel(app) {
         if (_perfiles.value.size <= 1) return
         _perfiles.update { l -> l.filterNot { it.id == id } }
         if (_carta.value.perfilId == id) elegirPerfil(_perfiles.value.first().id)
+    }
+
+    // ------------------------------------------------------------ encabezado (logo / formato Word)
+
+    fun importarLogo(uri: Uri) {
+        val id = _carta.value.perfilId.ifBlank { return }
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = runCatching { logos.importar(id, uri) }.getOrDefault(false)
+            if (ok) { _versionFirma.update { it + 1 }; actualizar { it.copy(mostrarMembrete = true) } }
+            else _mensajes.tryEmit("No se pudo leer la imagen")
+        }
+    }
+
+    fun quitarLogo() {
+        logos.borrar(_carta.value.perfilId)
+        _versionFirma.update { it + 1 }
+    }
+
+    /** Copia del .docx de la empresa: logo, membrete, línea y Cc/arch. al perfil actual. */
+    fun importarFormatoWord(uri: Uri) {
+        val id = _carta.value.perfilId.ifBlank { return }
+        viewModelScope.launch {
+            val f = withContext(Dispatchers.IO) { runCatching { ImportadorDocx.leer(getApplication(), uri) }.getOrNull() }
+            if (f == null) { _mensajes.tryEmit("No se pudo leer ese archivo Word"); return@launch }
+            withContext(Dispatchers.IO) { f.logo?.let { logos.guardar(id, it) } }
+            _versionFirma.update { it + 1 }
+            actualizar {
+                it.copy(
+                    mostrarMembrete = true,
+                    membrete = f.membrete,
+                    lineaEncabezado = f.linea,
+                    copiaArchivo = f.copiaArchivo || it.copiaArchivo,
+                    logoAnchoPt = f.logoAnchoPt ?: it.logoAnchoPt,
+                    fuente = if (f.arial) Fuente.SANS else it.fuente
+                )
+            }
+            val partes = listOfNotNull(
+                "logo".takeIf { f.logo != null },
+                "membrete".takeIf { f.membrete.isNotBlank() },
+                "línea".takeIf { f.linea },
+                "Cc/arch.".takeIf { f.copiaArchivo }
+            )
+            _mensajes.tryEmit(if (partes.isEmpty()) "Ese Word no tiene encabezado" else "Formato copiado: ${partes.joinToString(", ")}")
+        }
     }
 
     // ------------------------------------------------------------ navegación

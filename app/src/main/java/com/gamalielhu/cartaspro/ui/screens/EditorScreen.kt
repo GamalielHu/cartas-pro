@@ -55,7 +55,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -222,6 +224,12 @@ private fun FormularioCarta(vm: CartasViewModel, carta: Carta, version: Int, alD
     val galeria = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let { vm.importarFirma(firmaGaleria, it) }
     }
+    val galeriaLogo = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { vm.importarLogo(it) }
+    }
+    val abrirWord = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { vm.importarFormatoWord(it) }
+    }
 
     Column(
         Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(12.dp),
@@ -284,8 +292,40 @@ private fun FormularioCarta(vm: CartasViewModel, carta: Carta, version: Int, alD
                 Campo("Teléfono", carta.remTelefono, { v -> vm.actualizar { it.copy(remTelefono = v) } },
                     teclado = KeyboardType.Phone, modifier = Modifier.weight(1f))
             }
-            Campo("Membrete (una línea por renglón)", carta.membrete, { v -> vm.actualizar { it.copy(membrete = v) } },
+        }
+
+        Seccion("Encabezado y pie de página") {
+            Text("Copia el logo, el membrete, la línea y el Cc/arch. de una carta tuya en Word de esta empresa.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick = {
+                abrirWord.launch(arrayOf(Formato.DOCX.mime, "application/msword", "application/octet-stream"))
+            }, modifier = Modifier.fillMaxWidth()) { Text("Copiar formato de un Word (.docx)") }
+            val logo = remember(carta.perfilId, version) {
+                vm.logos.archivo(carta.perfilId)?.let { BitmapFactory.decodeFile(it.path) }?.asImageBitmap()
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(
+                    Modifier.size(width = 120.dp, height = 56.dp).background(Color.White, RoundedCornerShape(8.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (logo != null) Image(logo, "Logo", Modifier.fillMaxSize().padding(4.dp), contentScale = ContentScale.Fit)
+                    else Text("Sin logo", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                }
+                Column {
+                    TextButton(onClick = { galeriaLogo.launch("image/*") }) { Text("Logo desde galería") }
+                    if (logo != null) TextButton(onClick = { vm.quitarLogo() }) { Text("Quitar logo") }
+                }
+            }
+            if (logo != null) {
+                Text("Tamaño del logo: ${carta.logoAnchoPt.toInt()} pt", style = MaterialTheme.typography.labelLarge)
+                Slider(value = carta.logoAnchoPt, onValueChange = { v -> vm.actualizar { it.copy(logoAnchoPt = v) } }, valueRange = 50f..300f)
+            }
+            Campo("Membrete (texto, una línea por renglón)", carta.membrete, { v -> vm.actualizar { it.copy(membrete = v) } },
                 unaLinea = false, mayusculas = true)
+            Casilla("Mostrar encabezado", carta.mostrarMembrete) { v -> vm.actualizar { it.copy(mostrarMembrete = v) } }
+            Casilla("Línea bajo el encabezado", carta.lineaEncabezado) { v -> vm.actualizar { it.copy(lineaEncabezado = v) } }
+            Casilla("\"Cc/arch.\" al pie de página", carta.copiaArchivo) { v -> vm.actualizar { it.copy(copiaArchivo = v) } }
         }
 
         if (carta.estilo != Estilo.CERTIFICADO) {
@@ -356,11 +396,9 @@ private fun FormularioCarta(vm: CartasViewModel, carta: Carta, version: Int, alD
                 Text("Este documento siempre usa el formato ${carta.tipo.estiloFijo.titulo}.", style = MaterialTheme.typography.bodySmall)
             } else {
                 Opciones(listOf(Estilo.CLASICA, Estilo.MEMORANDO), carta.estilo, { it.titulo }) { e ->
-                    vm.actualizar { it.copy(estilo = e, mostrarMembrete = if (e == Estilo.MEMORANDO) it.membrete.isNotBlank() else it.mostrarMembrete) }
+                    vm.actualizar { it.copy(estilo = e) }
                 }
             }
-            Casilla("Mostrar membrete", carta.mostrarMembrete) { v -> vm.actualizar { it.copy(mostrarMembrete = v) } }
-            Casilla("Poner \"Cc/arch.\" al pie", carta.copiaArchivo) { v -> vm.actualizar { it.copy(copiaArchivo = v) } }
             Text("Papel", style = MaterialTheme.typography.labelLarge)
             Opciones(Papel.entries, carta.papel, { it.titulo }) { p -> vm.actualizar { it.copy(papel = p) } }
             Text("Letra", style = MaterialTheme.typography.labelLarge)

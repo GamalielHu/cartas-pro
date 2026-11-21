@@ -2,6 +2,8 @@ package com.gamalielhu.cartaspro.docx
 
 import android.graphics.BitmapFactory
 import com.gamalielhu.cartaspro.data.FirmaStore
+import com.gamalielhu.cartaspro.data.LogoStore
+import com.gamalielhu.cartaspro.pdf.RenderizadorCarta
 import com.gamalielhu.cartaspro.model.Alineacion
 import com.gamalielhu.cartaspro.model.Bloque
 import com.gamalielhu.cartaspro.model.Carta
@@ -21,16 +23,28 @@ object GeneradorDocx {
 
     private const val MARGEN_IZQ = 1700   // 3 cm (twips)
     private const val MARGEN_DER = 1420   // 2,5 cm
-    private const val MARGEN_SUP = 1420
     private const val MARGEN_INF = 1280
     private const val EMU_POR_PT = 12700L
 
-    private class Imagen(val numero: Int, val archivo: File, val cx: Long, val cy: Long) {
-        val rid get() = "rIdFirma$numero"
-        val nombre get() = "firma$numero.png"
-    }
+    private class Imagen(
+        val numero: Int, val archivo: File, val cx: Long, val cy: Long,
+        val rid: String = "rIdFirma$numero", val nombre: String = "firma$numero.png"
+    )
 
-    fun escribir(carta: Carta, firmas: FirmaStore, salida: OutputStream) {
+    /** Datos de maqueta que salen del renderizador del PDF para que el Word quede igual. */
+    private class Maqueta(val extras: FloatArray, val margenSupTwip: Int, val encabezado: Boolean)
+
+    fun escribir(carta: Carta, firmas: FirmaStore, logos: LogoStore, salida: OutputStream) {
+        val r = RenderizadorCarta(carta, firmas, logos)
+        val maqueta = Maqueta(r.extras, (r.margenSuperiorPt * 20).toInt(), r.tieneEncabezado)
+        val logo = if (carta.mostrarMembrete) logos.archivo(carta.perfilId)?.let { f ->
+            val op = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(f.path, op)
+            if (op.outWidth <= 0) null else {
+                val w = carta.logoAnchoPt.toDouble()
+                Imagen(10, f, (w * EMU_POR_PT).roundToLong(), (w * op.outHeight / op.outWidth * EMU_POR_PT).roundToLong(), "rIdLogo", "logo.png")
+            }
+        } else null
         val imagenes = (1..2).mapNotNull { n ->
             val f = firmas.archivo(n) ?: return@mapNotNull null
             val op = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -51,8 +65,11 @@ object GeneradorDocx {
             entrada("docProps/core.xml", core(carta))
             entrada("word/styles.xml", estilos(carta))
             entrada("word/_rels/document.xml.rels", relsDocumento(imagenes.values))
-            entrada("word/document.xml", documento(carta, imagenes))
-            imagenes.values.forEach { img ->
+            entrada("word/document.xml", documento(carta, imagenes, maqueta))
+            entrada("word/header1.xml", encabezado(carta, logo, maqueta.encabezado))
+            entrada("word/_rels/header1.xml.rels", relsEncabezado(logo))
+            entrada("word/footer1.xml", pie(carta))
+            (imagenes.values + listOfNotNull(logo)).forEach { img ->
                 zip.putNextEntry(ZipEntry("word/media/${img.nombre}"))
                 img.archivo.inputStream().use { it.copyTo(zip) }
                 zip.closeEntry()
@@ -62,24 +79,25 @@ object GeneradorDocx {
 
     // ------------------------------------------------------------------ documento
 
-    private fun documento(carta: Carta, imagenes: Map<Int, Imagen>): String {
+    private fun documento(carta: Carta, imagenes: Map<Int, Imagen>, maqueta: Maqueta): String {
         val util = carta.papel.anchoTwip - MARGEN_IZQ - MARGEN_DER
         val cuerpo = StringBuilder()
         var primero = true
-        for (b in ComposicionCarta.componer(carta)) {
+        ComposicionCarta.componer(carta).forEachIndexed { i, b ->
+            val extra = (maqueta.extras.getOrElse(i) { 0f } * 20).toInt()
             when (b) {
                 is Bloque.Parrafo -> {
-                    val antes = if (primero) 0 else (b.espacioAntesPt * 20).toInt()
+                    val antes = extra + if (primero) 0 else (b.espacioAntesPt * 20).toInt()
                     val tam = (b.tamano * 2).toInt().takeIf { it != 23 }
                     cuerpo.append(parrafo(b.segmentos, b.alineacion, antes, (util * b.sangria).toInt(), medioPuntos = tam))
                 }
-                is Bloque.Fila -> cuerpo.append(fila(b, if (primero) 0 else (b.espacioAntesPt * 20).toInt()))
-                is Bloque.Firmas -> cuerpo.append(firmas(b, util, imagenes))
+                is Bloque.Fila -> cuerpo.append(fila(b, extra + if (primero) 0 else (b.espacioAntesPt * 20).toInt()))
+                is Bloque.Firmas -> cuerpo.append(firmas(b, util, imagenes, extra))
             }
             primero = false
         }
         return """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body>$cuerpo<w:sectPr><w:pgSz w:w="${carta.papel.anchoTwip}" w:h="${carta.papel.altoTwip}"/><w:pgMar w:top="$MARGEN_SUP" w:right="$MARGEN_DER" w:bottom="$MARGEN_INF" w:left="$MARGEN_IZQ" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>"""
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body>$cuerpo<w:sectPr><w:headerReference w:type="default" r:id="rIdEnc"/><w:footerReference w:type="default" r:id="rIdPie"/><w:pgSz w:w="${carta.papel.anchoTwip}" w:h="${carta.papel.altoTwip}"/><w:pgMar w:top="${maqueta.margenSupTwip}" w:right="$MARGEN_DER" w:bottom="$MARGEN_INF" w:left="$MARGEN_IZQ" w:header="680" w:footer="560" w:gutter="0"/></w:sectPr></w:body></w:document>"""
     }
 
     private fun jc(a: Alineacion) = when (a) {
@@ -126,8 +144,8 @@ object GeneradorDocx {
 
     // ------------------------------------------------------------------ firmas
 
-    private fun firmas(b: Bloque.Firmas, util: Int, imagenes: Map<Int, Imagen>): String {
-        val antes = (b.espacioAntesPt * 20).toInt()
+    private fun firmas(b: Bloque.Firmas, util: Int, imagenes: Map<Int, Imagen>, extra: Int): String {
+        val antes = (b.espacioAntesPt * 20).toInt() + extra
         return when (b.posicion) {
             PosicionFirma.CENTRADA -> bloqueFirma(b.firmas.first(), 0, 0, antes, imagenes, b.linea)
             PosicionFirma.IZQUIERDA -> bloqueFirma(b.firmas.first(), 0, util / 2, antes, imagenes, b.linea)
@@ -172,10 +190,45 @@ object GeneradorDocx {
 
     private fun dibujo(img: Imagen): String = """<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${img.cx}" cy="${img.cy}"/><wp:docPr id="${img.numero}" name="Firma ${img.numero}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="${img.numero}" name="${img.nombre}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${img.rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${img.cx}" cy="${img.cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>"""
 
+    // ------------------------------------------------------------------ encabezado y pie de página
+
+    private const val NS = "xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\""
+
+    private fun encabezado(carta: Carta, logo: Imagen?, hay: Boolean): String {
+        val sb = StringBuilder()
+        if (hay) {
+            val util = carta.papel.anchoTwip - MARGEN_IZQ - MARGEN_DER
+            if (logo != null) sb.append("<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\"/></w:pPr>${dibujo(logo)}</w:p>")
+            val lineas = carta.membrete.lines().map { it.trim() }.filter { it.isNotEmpty() }
+            val der = (util - 4200).coerceAtLeast(0)
+            lineas.forEach { l ->
+                sb.append("<w:p><w:pPr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"228\" w:lineRule=\"auto\"/><w:ind w:right=\"$der\"/><w:jc w:val=\"center\"/></w:pPr>")
+                sb.append(run(Segmento(l, negrita = true), 16)).append("</w:p>")
+            }
+            if (carta.lineaEncabezado) {
+                sb.append("<w:p><w:pPr><w:pBdr><w:bottom w:val=\"single\" w:sz=\"6\" w:space=\"1\" w:color=\"000000\"/></w:pBdr><w:spacing w:before=\"0\" w:after=\"0\" w:line=\"120\" w:lineRule=\"exact\"/></w:pPr></w:p>")
+            }
+        }
+        if (sb.isEmpty()) sb.append("<w:p/>")
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:hdr $NS>$sb</w:hdr>"
+    }
+
+    private fun relsEncabezado(logo: Imagen?): String {
+        val rel = logo?.let {
+            "<Relationship Id=\"${it.rid}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/${it.nombre}\"/>"
+        }.orEmpty()
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">$rel</Relationships>"
+    }
+
+    private fun pie(carta: Carta): String {
+        val p = if (carta.copiaArchivo) "<w:p>${run(Segmento("Cc/arch."), 19)}</w:p>" else "<w:p/>"
+        return "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<w:ftr $NS>$p</w:ftr>"
+    }
+
     // ------------------------------------------------------------------ partes fijas
 
     private fun tiposContenido() = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>"""
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/><Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>"""
 
     private const val RELS_RAIZ = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/></Relationships>"""
@@ -185,7 +238,7 @@ object GeneradorDocx {
             "<Relationship Id=\"${it.rid}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/${it.nombre}\"/>"
         }
         return """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdEstilos" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>$img</Relationships>"""
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdEstilos" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rIdEnc" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/><Relationship Id="rIdPie" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>$img</Relationships>"""
     }
 
     private fun estilos(carta: Carta): String {

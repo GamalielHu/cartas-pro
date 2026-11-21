@@ -15,6 +15,8 @@ import android.text.TextPaint
 import android.text.style.StyleSpan
 import android.text.style.UnderlineSpan
 import com.gamalielhu.cartaspro.data.FirmaStore
+import com.gamalielhu.cartaspro.data.LogoStore
+import com.gamalielhu.cartaspro.model.elasticidad
 import com.gamalielhu.cartaspro.model.Alineacion
 import com.gamalielhu.cartaspro.model.Bloque
 import com.gamalielhu.cartaspro.model.Carta
@@ -30,18 +32,18 @@ import kotlin.math.min
  * Canvas: el de PdfDocument (exportación) o el de un Bitmap (vista previa). Así la vista previa
  * es idéntica al PDF.
  */
-class RenderizadorCarta(private val carta: Carta, firmas: FirmaStore) {
+class RenderizadorCarta(private val carta: Carta, firmas: FirmaStore, logos: LogoStore) {
 
     val anchoPt = carta.papel.anchoPt
     val altoPt = carta.papel.altoPt
 
     private val margenIzq = 85f   // 3 cm
     private val margenDer = 71f   // 2,5 cm
-    private val margenSup = 71f
     private val margenInf = 64f
     private val anchoUtil = anchoPt - margenIzq - margenDer
-    private val limite = altoPt - margenInf - 14f // reserva para el n° de página
+    private val limite = altoPt - margenInf - 14f // reserva para el n° de página / Cc
     private val anchoEtiqueta = 80f
+    private val topEncabezado = 34f
 
     private val tipoBase: Typeface = if (carta.fuente == Fuente.SERIF) Typeface.SERIF else Typeface.SANS_SERIF
     private val tipoNegrita: Typeface = Typeface.create(tipoBase, Typeface.BOLD)
@@ -56,12 +58,78 @@ class RenderizadorCarta(private val carta: Carta, firmas: FirmaStore) {
         for (n in 1..2) firmas.archivo(n)?.let { f -> BitmapFactory.decodeFile(f.path)?.let { put(n, it) } }
     }
 
-    private val paginas: List<List<(Canvas) -> Unit>> = maquetar()
+    // ---- encabezado de página (logo + membrete + línea)
+    private val logo: Bitmap? = if (carta.mostrarMembrete) logos.archivo(carta.perfilId)?.let { BitmapFactory.decodeFile(it.path) } else null
+    private val logoW = carta.logoAnchoPt.coerceIn(30f, anchoUtil)
+    private val logoH = logo?.let { logoW * it.height / it.width } ?: 0f
+    private val lineasMembrete: List<String> =
+        if (carta.mostrarMembrete) carta.membrete.lines().map { it.trim() }.filter { it.isNotEmpty() } else emptyList()
+    private val pinturaMembrete = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.BLACK; textSize = 8f; typeface = tipoNegrita; textAlign = Paint.Align.CENTER
+    }
+    private val altoTextoMembrete = lineasMembrete.size * 9.5f
+    private val finEncabezado: Float = run {
+        val alto = max(logoH, altoTextoMembrete)
+        if (alto <= 0f && !(carta.mostrarMembrete && carta.lineaEncabezado)) 0f else topEncabezado + alto + 4f
+    }
+    private val margenSup = max(71f, finEncabezado + 22f)
+    val margenSuperiorPt: Float get() = margenSup
+    val tieneEncabezado: Boolean get() = finEncabezado > 0f
+
+    /** Espacio extra (pt) antes de cada bloque para repartir la carta en la hoja. Lo usa también el DOCX. */
+    val extras: FloatArray
+    private val paginas: List<List<(Canvas) -> Unit>>
+
+    init {
+        val bloques = ComposicionCarta.componer(carta)
+        var r = maquetar(bloques, FloatArray(bloques.size))
+        val pesos = bloques.map { it.elasticidad }
+        val suma = pesos.sum()
+        val e = FloatArray(bloques.size)
+        if (r.first.size == 1 && suma > 0f) {
+            val libre = (limite - r.second) * 0.82f
+            if (libre > 4f) {
+                pesos.forEachIndexed { i, w -> e[i] = (libre * w / suma).coerceAtMost(140f) }
+                val r2 = maquetar(bloques, e)
+                if (r2.first.size == 1) r = r2 else e.fill(0f)
+            }
+        }
+        extras = e
+        paginas = r.first
+    }
+
+    private fun dibujarEncabezado(c: Canvas) {
+        if (finEncabezado <= 0f) return
+        var x = margenIzq
+        if (logo != null) {
+            c.drawBitmap(logo, null, RectF(margenIzq, topEncabezado, margenIzq + logoW, topEncabezado + logoH),
+                Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))
+            x = margenIzq + logoW + 10f
+        }
+        if (lineasMembrete.isNotEmpty()) {
+            val anchoBloque = lineasMembrete.maxOf { pinturaMembrete.measureText(it) }
+            val cx = x + anchoBloque / 2f
+            var yy = topEncabezado + 8f
+            lineasMembrete.forEach { l -> c.drawText(l, cx, yy, pinturaMembrete); yy += 9.5f }
+        }
+        if (carta.lineaEncabezado) {
+            val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; strokeWidth = 0.8f }
+            c.drawLine(margenIzq, finEncabezado, margenIzq + anchoUtil, finEncabezado, p)
+        }
+    }
+
+    private fun dibujarPie(c: Canvas) {
+        if (!carta.copiaArchivo) return
+        val p = TextPaint(pintura).apply { textSize = 9.5f }
+        c.drawText("Cc/arch.", margenIzq, altoPt - 36f, p)
+    }
 
     val totalPaginas: Int get() = paginas.size
 
     fun dibujarPagina(indice: Int, canvas: Canvas) {
+        dibujarEncabezado(canvas)
         paginas[indice].forEach { it(canvas) }
+        dibujarPie(canvas)
         if (paginas.size > 1) {
             val p = TextPaint(pintura).apply { textSize = 9f; textAlign = Paint.Align.CENTER; color = Color.DKGRAY }
             canvas.drawText("Página ${indice + 1} de ${paginas.size}", anchoPt / 2f, altoPt - margenInf + 8f, p)
@@ -79,7 +147,8 @@ class RenderizadorCarta(private val carta: Carta, firmas: FirmaStore) {
 
     // ---------------------------------------------------------------------------------------
 
-    private fun maquetar(): List<List<(Canvas) -> Unit>> {
+    /** Devuelve las páginas y la altura final ocupada en la última. */
+    private fun maquetar(bloques: List<Bloque>, extra: FloatArray): Pair<List<List<(Canvas) -> Unit>>, Float> {
         val paginas = mutableListOf<MutableList<(Canvas) -> Unit>>(mutableListOf())
         var y = margenSup
         fun nuevaPagina() {
@@ -118,7 +187,8 @@ class RenderizadorCarta(private val carta: Carta, firmas: FirmaStore) {
             }
         }
 
-        for (bloque in ComposicionCarta.componer(carta)) {
+        bloques.forEachIndexed { indice, bloque ->
+            y += extra[indice]
             when (bloque) {
                 is Bloque.Parrafo -> {
                     val sangriaPt = anchoUtil * bloque.sangria
@@ -169,7 +239,7 @@ class RenderizadorCarta(private val carta: Carta, firmas: FirmaStore) {
                 }
             }
         }
-        return paginas
+        return paginas to y
     }
 
     private fun dibujarFirma(

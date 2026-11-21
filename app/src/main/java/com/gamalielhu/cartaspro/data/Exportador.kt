@@ -30,10 +30,11 @@ object Exportador {
         dir.listFiles()?.forEach { it.delete() }
         val archivo = File(dir, nombreArchivo(c, formato))
         val firmas = FirmaStore(context)
+        val logos = LogoStore(context)
         archivo.outputStream().use { out ->
             when (formato) {
-                Formato.PDF -> GeneradorPdf.escribir(c, firmas, out)
-                Formato.DOCX -> GeneradorDocx.escribir(c, firmas, out)
+                Formato.PDF -> GeneradorPdf.escribir(c, firmas, logos, out)
+                Formato.DOCX -> GeneradorDocx.escribir(c, firmas, logos, out)
             }
         }
         return archivo
